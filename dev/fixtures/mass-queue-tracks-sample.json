@@ -1,0 +1,141 @@
+{
+  "get_album_tracks": {
+    "uri": "library://album/1448",
+    "raw": {
+      "id": 1,
+      "type": "result",
+      "success": true,
+      "result": {
+        "context": {
+          "id": "01MOCKC0NTEXT0000000000004",
+          "parent_id": null,
+          "user_id": null
+        },
+        "response": {
+          "tracks": [
+            {
+              "media_title": "Hotel California",
+              "media_content_id": "library://track/7043",
+              "duration": 391,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            },
+            {
+              "media_title": "New Kid In Town",
+              "media_content_id": "library://track/7044",
+              "duration": 304,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            },
+            {
+              "media_title": "Life In the Fast Lane",
+              "media_content_id": "library://track/7045",
+              "duration": 286,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            },
+            {
+              "media_title": "Wasted Time",
+              "media_content_id": "library://track/7046",
+              "duration": 296,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            },
+            {
+              "media_title": "Wasted Time (Reprise)",
+              "media_content_id": "library://track/7047",
+              "duration": 83,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            },
+            {
+              "media_title": "Victim of Love",
+              "media_content_id": "library://track/7048",
+              "duration": 250,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            },
+            {
+              "media_title": "Pretty Maids All In a Row",
+              "media_content_id": "library://track/7049",
+              "duration": 239,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            },
+            {
+              "media_title": "Try and Love Again",
+              "media_content_id": "library://track/7050",
+              "duration": 311,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            },
+            {
+              "media_title": "The Last Resort",
+              "media_content_id": "library://track/7051",
+              "duration": 444,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California",
+              "media_artist": "Eagles"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "get_playlist_tracks": {
+    "uri": "library://playlist/158",
+    "raw": {
+      "id": 2,
+      "type": "result",
+      "success": true,
+      "result": {
+        "context": {
+          "id": "01MOCKC0NTEXT0000000000005",
+          "parent_id": null,
+          "user_id": null
+        },
+        "response": {
+          "tracks": [
+            {
+              "media_title": "Those Shoes",
+              "media_content_id": "apple_music://track/635774285",
+              "duration": 294,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/9a/54/6e/9a546e8b-f994-8d1f-a94b-d2d642dee4ce/075596056021.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "The Long Run",
+              "media_artist": "Eagles",
+              "position": null
+            },
+            {
+              "media_title": "New Kid In Town",
+              "media_content_id": "apple_music://track/1293903290",
+              "duration": 304,
+              "media_image": "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/8f/f0/88/8ff088ee-bd18-8a27-1bb6-c0e44ad91cb6/603497862542.jpg/1000x1000bb.jpg",
+              "favorite": false,
+              "media_album_name": "Hotel California (40th Anniversary Expanded Edition)",
+              "media_artist": "Eagles",
+              "position": null
+            }
+          ]
+        }
+      }
+    }
+  }
+}

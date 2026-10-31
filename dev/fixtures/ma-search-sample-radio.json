@@ -13,7 +13,35 @@
       "albums": [],
       "tracks": [],
       "playlists": [],
-      "radio": [],
+      "radio": [
+        {
+          "media_type": "radio",
+          "uri": "radiobrowser://radio/db93a00f-9191-46ab-9e87-ec9b373b3eee",
+          "name": "\tArrow Classic Rock",
+          "version": "",
+          "image": "https://www.arrow.nl/wp-content/uploads/2020/08/logo.png",
+          "favorite": false,
+          "explicit": null
+        },
+        {
+          "media_type": "radio",
+          "uri": "radiobrowser://radio/9afeaf65-bb57-4d76-892d-c7a39fc6c805",
+          "name": "\tHard Rock Radio FM",
+          "version": "",
+          "image": null,
+          "favorite": false,
+          "explicit": null
+        },
+        {
+          "media_type": "radio",
+          "uri": "radiobrowser://radio/d608bb74-0740-47e3-a1e2-c11edfeec91f",
+          "name": " \tROCKANTENNE Alternative (mp3)",
+          "version": "",
+          "image": "https://www.rockantenne.de/logos/station-rock-antenne/apple-touch-icon.png",
+          "favorite": false,
+          "explicit": null
+        }
+      ],
       "audiobooks": [],
       "podcasts": []
     }
