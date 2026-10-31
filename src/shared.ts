@@ -11,12 +11,54 @@ export const ART = [
 export const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); };
 export const noFocus = (e: PointerEvent) => e.preventDefault();
 
+/** Image URLs the card will load: https, data:image and same-origin relative paths. Plain http (mixed content on an
+ *  https dashboard, and usually a LAN address) and protocol-relative URLs are dropped. */
+export function safeImage(u: unknown): string {
+  if (typeof u !== 'string') return '';
+  const s = u.trim();
+  if (/^https:\/\//i.test(s) || /^data:image\//i.test(s)) return s;
+  if (s.startsWith('/') && !s.startsWith('//')) return s;
+  return '';
+}
+/** Fallback art for radio stations without a logo (Radio Browser often has image: null). */
+export const RADIO_ART = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+  + '<stop offset="0" stop-color="#1d2b4f"/><stop offset="1" stop-color="#0b0f1c"/></linearGradient></defs><rect width="200" height="200" fill="url(#g)"/>'
+  + '<g fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".92">'
+  + '<path d="M100 92 72 170M100 92l28 78M82 142h36"/><circle cx="100" cy="84" r="9" fill="#fff"/>'
+  + '<path d="M76 60a34 34 0 0 0 0 48M124 60a34 34 0 0 1 0 48" opacity=".8"/><path d="M60 44a58 58 0 0 0 0 80M140 44a58 58 0 0 1 0 80" opacity=".55"/></g></svg>');
+export const isRadio = (it: Partial<MaItem> | undefined) => !!it && (it.media_type === 'radio' || /^[a-z0-9_\-]+:\/\/radio\//i.test(it.uri ?? ''));
+
 export function imageOf(it: MaItem): string {
   const img: any = it.image ?? it.image_url ?? it.media_image ?? it.metadata?.images?.[0];
-  if (!img) return '';
-  if (typeof img === 'string') return img;
-  const p = img.url ?? img.path ?? '';
-  return typeof p === 'string' && /^(https?:|data:|\/)/.test(p) ? p : '';
+  const src = !img ? '' : typeof img === 'string' ? safeImage(img) : safeImage(img.url ?? img.path);
+  return src || (isRadio(it) ? RADIO_ART : '');
+}
+/** Clean an MA item: Radio Browser names come with leading/trailing tabs and spaces ("\tArrow Classic Rock"). */
+export const cleanName = (s: unknown) => (typeof s === 'string' ? s.replace(/[\s\u00a0]+/g, ' ').trim() : '');
+export function normItem<T extends MaItem>(it: T): T {
+  if (!it || typeof it !== 'object') return it;
+  const name = cleanName(it.name);
+  return name === it.name ? it : { ...it, name };
+}
+
+/**
+ * Art for the now-playing player (Now Playing, backdrop, screensaver).
+ * 1. entity_picture_local (HA's relative /api/media_player_proxy/... path, works through Nabu Casa / https)
+ * 2. entity_picture only when it is relative; an absolute URL (MA's http://<lan-ip>:8095/imageproxy...) is never used
+ * 3. the current queue item's image when it is https
+ * 4. '' (the caller shows its placeholder)
+ */
+export function playerArt(attrs: Record<string, any> | undefined, cur?: { media_image?: string; media_content_id?: string } | null): string {
+  const a = attrs ?? {};
+  const rel = (u: unknown) => (typeof u === 'string' && u.startsWith('/') && !u.startsWith('//') ? u : '');
+  const local = rel(a.entity_picture_local) || rel(a.entity_picture);
+  if (local) return local;
+  if (cur && (!cur.media_content_id || !a.media_content_id || cur.media_content_id === a.media_content_id)) {
+    const q = safeImage(cur.media_image);
+    if (q && !q.startsWith('/')) return q;
+  }
+  return '';
 }
 export const artistNames = (it: MaItem) =>
   it.artists?.length ? it.artists.map((a: any) => (typeof a === 'string' ? a : a.name)).join(', ')
@@ -32,11 +74,15 @@ export const fmtTime = (s: number) => fmtDur(s) || '0:00';
 export function artTpl(it: { name: string } & Partial<MaItem>, cls: string) {
   const src = imageOf(it as MaItem);
   return html`<span class="ar ${cls}" style="background:${ART[hash(it.name || '?') % ART.length]}">${src
-    ? html`<img src=${src} alt="" loading="lazy" draggable="false" @error=${(e: Event) => ((e.target as HTMLElement).style.display = 'none')} />`
+    ? html`<img src=${src} alt="" loading="lazy" draggable="false" @error=${(e: Event) => {
+        // a dead station logo falls back to the radio tower; anything else to the coloured tile
+        const img = e.target as HTMLImageElement;
+        if (isRadio(it as MaItem) && img.src !== RADIO_ART) img.src = RADIO_ART; else img.style.display = 'none';
+      }} />`
     : nothing}</span>`;
 }
-export function provTpl(uri?: string, provider?: string) {
-  const p = providerLabel(uri ?? '', provider);
+export function provTpl(uri?: string, provider?: string, mediaType?: string) {
+  const p = mediaType === 'radio' ? 'Radio' : providerLabel(uri ?? '', provider);
   return p ? html`<span class="pv">${p}</span>` : nothing;
 }
 
@@ -63,7 +109,7 @@ export function fire(el: HTMLElement, type: string, detail: any = {}) {
 export async function playMedia(hass: HomeAssistant, config: JukeboxCardConfig, it: MaItem, mediaType: string, enqueue: Enqueue = 'play', radio = false) {
   const entity_id = config.entity || 'media_player.everywhere';
   const data: Record<string, any> = { media_id: it.uri, media_type: mediaType, enqueue };
-  if (radio) data.radio_mode = true;
+  if (radio && mediaType !== 'radio') data.radio_mode = true;
   await hass.callService('music_assistant', 'play_media', data, { entity_id });
   return { data, entity_id };
 }
@@ -139,8 +185,8 @@ export function menuTpl(pos: MenuPos, head: { item: { name: string } & Partial<M
 }
 
 /** Media item standard actions (same as Search). */
-export function mediaActions(play: (enq: Enqueue, radio?: boolean) => void, open?: () => void): MenuAction[] {
-  return [
+export function mediaActions(play: (enq: Enqueue, radio?: boolean) => void, open?: () => void, radioStation = false): MenuAction[] {
+  const acts: MenuAction[] = [
     { id: 'play', icon: 'play', label: 'Play now', run: () => play('play'), sheetOnly: true },
     ...(open ? [{ id: 'open', icon: 'open', label: 'Open', run: open }] : []),
     { id: 'next', icon: 'qnext', label: 'Play next', run: () => play('next') },
@@ -148,6 +194,8 @@ export function mediaActions(play: (enq: Enqueue, radio?: boolean) => void, open
     { id: 'replace', icon: 'swap', label: 'Replace queue', run: () => play('replace') },
     { id: 'radio', icon: 'radio', label: 'Start radio', run: () => play('play', true) },
   ];
+  // a radio station is already a stream: "Start radio" (radio_mode) makes no sense there
+  return radioStation ? acts.filter((a) => a.id !== 'radio') : acts;
 }
 
 /* ---------------- shared CSS for art, tiles, rows, badges, menus, toasts ---------------- */

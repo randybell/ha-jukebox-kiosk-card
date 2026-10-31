@@ -37,7 +37,10 @@ export interface JukeboxCardConfig {
   rooms?: Array<RoomConfig | string>;
   /** Button that adds the current song to favorites. Default button.everywhere_favorite_current_song. Set to '' to hide. */
   favorite_entity?: string;
-  /** mass_queue config entry id. Needed for Browse drill-down (album/artist/playlist tracks). Optional. */
+  /** mass_queue config entry id (a different entry from the Music Assistant one). Needed for Browse drill-down
+   *  (album/artist/playlist tracks via mass_queue.get_*_tracks). Optional. */
+  mass_queue_entry_id?: string;
+  /** @deprecated 0.3.0 name of mass_queue_entry_id, still accepted. */
   queue_config_entry_id?: string;
   /** Minutes of no touches before the screensaver. Default 10. 0 disables. */
   screensaver_minutes?: number;

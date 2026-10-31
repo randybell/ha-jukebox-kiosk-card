@@ -32,7 +32,7 @@
         { name: 'Garage', entity: 'media_player.garage' },
       ],
       favorite_entity: 'button.everywhere_favorite_current_song',
-      ...(params.get('noqueue') === '1' ? {} : { queue_config_entry_id: '01MASSQUEUE0000000000000000' }),
+      ...(params.get('noqueue') === '1' ? {} : params.get('legacyq') === '1' ? { queue_config_entry_id: '01MASSQUEUE0000000000000000' } : { mass_queue_entry_id: '01MASSQUEUE0000000000000000' }),
       screensaver_minutes: Number(params.get('saver') ?? 10),
       accent: 'mono',
       limit: 8,

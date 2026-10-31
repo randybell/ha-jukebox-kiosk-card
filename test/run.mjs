@@ -2,7 +2,8 @@
 // Real pointer/mouse/touch input via Chrome DevTools Protocol (puppeteer-core + system Chrome).
 // Usage: (serve the project root on :8765)  node test/run.mjs
 import puppeteer from 'puppeteer-core';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { hermetic } from './intercept.mjs';
 
 const BASE = process.env.JB_URL ?? 'http://127.0.0.1:8765/dev/index.html';
 const SHOTS = new URL('./shots/', import.meta.url).pathname;
@@ -92,6 +93,7 @@ const state = (page) => page.evaluate((sv) => {
 const waitShown = (page, q, timeout = 4000) => page.waitForFunction((sv, q) => eval(sv).shadowRoot.querySelector('.res').dataset.shownQuery === q, { timeout }, H.sv, q);
 
 const page = await browser.newPage();
+await hermetic(page);
 await page.evaluateOnNewDocument(FOCUS_MONITOR);
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -463,6 +465,153 @@ await page.mouse.click(r.x, r.y); await sleep(150);
 const mr = await rectOf(page, `${H.sv}.shadowRoot.querySelector('.menu')`);
 check('15k 1920x1080 ⋮ menu opens next to its button (zoom-corrected position)', mr && Math.min(Math.abs((mr.y - mr.h / 2) - (r.y + r.h / 2)), Math.abs((mr.y + mr.h / 2) - (r.y - r.h / 2))) < 40 && Math.abs((mr.x + mr.w / 2) - r.x) < 80, `btn ${JSON.stringify(r)} menu ${JSON.stringify(mr)}`);
 await page.keyboard.press('Escape');
+
+// =================== 0.3.1: live API shapes (mass_queue tracks + paging, player art, radio) ===================
+{
+  const pg = await browser.newPage();
+  await hermetic(pg, { dead: ['rockantenne'] });
+  pg.on('pageerror', (e) => pageErrors.push('[16] ' + e.message));
+  const BR = `__card.shadowRoot.querySelector('jb-browse')`;
+  const pcalls = (since = 0) => calls(pg, since);
+  const pq = async (fn) => { const n = await ncalls(pg); await fn(); await sleep(300); return actions(await pcalls(n)); };
+  const rows = () => pg.evaluate((b) => [...eval(b).shadowRoot.querySelectorAll('.detail .row')].map((r) => ({ name: r.querySelector('b')?.textContent, du: r.querySelector('.du')?.textContent?.trim() ?? '', img: r.querySelector('img')?.getAttribute('src') ?? '' })), BR);
+  const detail = (it, type) => pg.evaluate((b, it, type) => eval(b).openDetail(it, type), BR, it, type);
+  const meta = () => pg.evaluate((b) => eval(b).shadowRoot.querySelector('.detail .meta')?.textContent?.trim() ?? '', BR);
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const fx = JSON.parse(readFileSync(new URL('../dev/fixtures/mass-queue-tracks-sample.json', import.meta.url)));
+  const realAlbum = fx.get_album_tracks.raw.result.response.tracks;
+
+  // 16a-c: real get_album_tracks / get_playlist_tracks shapes
+  await open(pg, '&latency=20&tab=browse');
+  let n = await ncalls(pg);
+  await detail({ media_type: 'album', uri: 'library://album/1448', name: 'Hotel California', artists: [{ name: 'Eagles' }] }, 'album'); await sleep(300);
+  let rs = await rows(); let cs = (await pcalls(n)).filter((c) => c.d === 'mass_queue');
+  check('16a real get_album_tracks parses: 9 rows, names, durations m:ss per row', rs.length === realAlbum.length && rs.every((r, i) => r.name === realAlbum[i].media_title && r.du === fmt(realAlbum[i].duration)), JSON.stringify(rs.slice(0, 2)));
+  const tot = Math.round(realAlbum.reduce((a, t) => a + t.duration, 0) / 60);
+  check('16b album header shows track count + total time; rows use the https media_image', (await meta()) === `9 tracks · ${tot} min` && (await pg.evaluate((b) => eval(b)._detail.tracks.every((t) => /^https:\/\//.test(t.image)), BR)), await meta());
+  check('16c get_album_tracks {config_entry_id: mass_queue_entry_id, uri}, return_response, no page', cs.length === 1 && cs[0].s === 'get_album_tracks' && cs[0].rr && cs[0].data.config_entry_id === '01MASSQUEUE0000000000000000' && cs[0].data.uri === 'library://album/1448' && !('page' in cs[0].data), JSON.stringify(cs[0]?.data));
+  n = await ncalls(pg);
+  await detail({ media_type: 'playlist', uri: 'library://playlist/158', name: 'Eagles' }, 'playlist'); await sleep(300);
+  rs = await rows(); cs = (await pcalls(n)).filter((c) => c.d === 'mass_queue');
+  check('16d real get_playlist_tracks (position: null) parses; page 0 sent; short list → no further page calls', rs.length === 2 && rs[0].name === 'Those Shoes' && rs[0].du === '4:54' && cs.length === 1 && cs[0].data.page === 0, `${JSON.stringify(rs)} ${JSON.stringify(cs.map((c) => c.data))}`);
+
+  // 16e-g: playlist paging (Long Drive = 120 unique tracks) in the three server behaviours
+  const longDrive = async (q) => {
+    await open(pg, `&latency=20&tab=browse${q}`);
+    await clickEl(pg, `${BR}.shadowRoot.querySelector('[data-cat="playlist"]')`); await sleep(300);
+    const nn = await ncalls(pg);
+    await pg.evaluate((b) => [...eval(b).shadowRoot.querySelectorAll('.tile')].find((t) => t.querySelector('b').textContent === 'Long Drive').querySelector('.open').click(), BR);
+    await sleep(500);
+    for (let i = 0; i < 8; i++) { await pg.evaluate((b) => { const s = eval(b).shadowRoot.querySelector('.scroll'); s.scrollTop = s.scrollHeight; s.dispatchEvent(new Event('scroll')); }, BR); await sleep(250); }
+    const r = await rows();
+    const pages = (await pcalls(nn)).filter((c) => c.s === 'get_playlist_tracks').map((c) => c.data.page);
+    const more = await pg.evaluate((b) => !!eval(b).shadowRoot.querySelector('.more-t'), BR);
+    return { n: r.length, uniq: new Set(r.map((x) => x.name)).size, pages, more, last: r.at(-1)?.name, meta: await meta() };
+  };
+  let ld = await longDrive('&mqpage=paged');
+  check('16e paged server (50/page): scrolling loads pages 0,1,2 → all 120 tracks, then stops', ld.n === 120 && ld.uniq === 120 && ld.pages.join() === '0,1,2' && !ld.more && ld.last === 'Highway Song 120', JSON.stringify(ld));
+  ld = await longDrive('&mqpage=all');
+  check('16f mass_queue 0.10 (page 0 = everything, page 1 = MA page): 120 tracks once, repeat run detected, ≤2 calls', ld.n === 120 && ld.uniq === 120 && ld.pages.length <= 2 && ld.pages[0] === 0 && !ld.more, JSON.stringify(ld));
+  ld = await longDrive('&mqpage=ignore');
+  check('16g server ignoring page: no duplicate tracks appended, paging stops', ld.n === 120 && ld.uniq === 120 && ld.pages.length === 2 && !ld.more, JSON.stringify(ld));
+  check('16h header for a 120-track playlist shows hours/minutes', /^120 tracks · (\d+ h )?\d+ min$/.test(ld.meta), ld.meta);
+
+  // 16i: legacy queue_config_entry_id + editor rename
+  await open(pg, '&latency=20&tab=browse&legacyq=1');
+  n = await ncalls(pg);
+  await detail({ media_type: 'album', uri: 'library://album/1448', name: 'Hotel California' }, 'album'); await sleep(300);
+  cs = (await pcalls(n)).filter((c) => c.s === 'get_album_tracks');
+  check('16i legacy queue_config_entry_id still drives mass_queue calls', cs.length === 1 && cs[0].data.config_entry_id === '01MASSQUEUE0000000000000000', JSON.stringify(cs[0]?.data));
+  // 16j: get_queue_items limit_after clamped to 1..1000
+  const gq = (await pcalls()).filter((c) => c.s === 'get_queue_items');
+  const lim = await pg.evaluate(async () => { const q = __card.queue; q.limitAfter = 5000; await q.refresh(); q.limitAfter = 0.2; await q.refresh(); return window.__calls.filter((c) => c.service === 'get_queue_items').slice(-2).map((c) => c.data.limit_after); });
+  check('16j get_queue_items {entity, limit_before:1, limit_after 1..1000}', gq.length > 0 && gq.every((c) => c.data.entity === EV && c.data.limit_before === 1 && c.data.limit_after >= 1 && c.data.limit_after <= 1000) && lim.join() === '1000,1', `${JSON.stringify(gq[0]?.data)} clamp=${lim}`);
+
+  // 16k-o: player art never uses the absolute entity_picture
+  const artState = () => pg.evaluate(() => {
+    const r = __card.shadowRoot; const np = r.querySelector('jb-now').shadowRoot;
+    const sv = r.querySelector('.saver');
+    return { now: np.querySelector('.art img, img')?.getAttribute('src') ?? '', full: r.querySelector('main.np')?.getAttribute('style') ?? '',
+      light: __card._lightKey ?? '', draws: r.querySelector('canvas.bdl')?.dataset.draws ?? '',
+      svbg: sv?.querySelector('.sv-bg')?.getAttribute('style') ?? '', svimg: sv?.querySelector('.sv-np img')?.getAttribute('src') ?? '',
+      abs: __hass.states['media_player.everywhere'].attributes.entity_picture };
+  });
+  pg.__img.length = 0;
+  await open(pg, '&latency=20&tab=now&backdrop=full'); await sleep(400);
+  let a = await artState();
+  check('16k Now Playing art = relative entity_picture_local (/api/media_player_proxy/), not the absolute entity_picture', a.now.startsWith('/api/media_player_proxy/media_player.everywhere?') && /^http:\/\/192\.168\./.test(a.abs), JSON.stringify(a));
+  check('16l full backdrop --_art uses the proxy path', /--_art:url\("\/api\/media_player_proxy\//.test(a.full), a.full);
+  await open(pg, '&latency=20&tab=now&backdrop=light'); await sleep(600);
+  a = await artState();
+  check('16m light backdrop canvas drawn from the proxy path', a.light.startsWith('/api/media_player_proxy/') && Number(a.draws) >= 1, JSON.stringify({ light: a.light, draws: a.draws }));
+  await open(pg, '&latency=20&tab=now&backdrop=full&saver=0.02');
+  await pg.waitForFunction(() => !!__card.shadowRoot.querySelector('.saver .sv-np img'), { timeout: 5000 }).catch(() => {});
+  a = await artState();
+  check('16n screensaver background + thumbnail use the proxy path', /url\("\/api\/media_player_proxy\//.test(a.svbg) && a.svimg.startsWith('/api/media_player_proxy/'), JSON.stringify({ svbg: a.svbg.slice(0, 80), svimg: a.svimg }));
+  await open(pg, '&latency=20&tab=now&backdrop=full&noart=1'); await sleep(700);
+  a = await artState();
+  const cur = await pg.evaluate(() => __card.queue.currentItem?.media_image ?? '');
+  check('16o no entity_picture_local → current queue item image (https/data), never the absolute URL', a.now && a.now === cur && !/^http:/.test(a.now) && a.full.includes(cur.slice(0, 40)), `${a.now.slice(0, 50)} vs ${cur.slice(0, 50)}`);
+  check('16p no request ever goes to the absolute LAN entity_picture host', !pg.__img.some((u) => u.includes('192.168.')), pg.__img.filter((u) => u.includes('192.168.')).join(','));
+
+  // 16q-w: radio
+  await open(pg, '&latency=20&tab=browse&radio=1');
+  await pg.waitForFunction((b) => !!eval(b).shadowRoot.querySelector('[data-cat="radio"]'), { timeout: 4000 }, BR).catch(() => {});
+  n = await ncalls(pg);
+  await clickEl(pg, `${BR}.shadowRoot.querySelector('[data-cat="radio"]')`); await sleep(700);
+  cs = await pcalls(n);
+  let g = await pg.evaluate((b) => { const r = eval(b).shadowRoot; return { src: r.querySelector('.grid')?.dataset.src, note: !!r.querySelector('.note.src'), sort: r.querySelector('[data-action="sort"], .sort')?.textContent?.trim() ?? '',
+    tiles: [...r.querySelectorAll('.tile')].map((t) => ({ name: t.querySelector('b').textContent, pv: t.querySelector('.pv')?.textContent.trim(), img: t.querySelector('img')?.getAttribute('src') ?? '', uri: t.dataset.uri })) }; }, BR);
+  const libCalls = cs.filter((c) => c.s === 'get_library' && c.data.media_type === 'radio'), srch = cs.filter((c) => c.s === 'search');
+  check('16q Browse > Radio shown when only search has stations (probe falls back to search)', g.tiles.length >= 10, `tiles=${g.tiles.length}`);
+  check('16r empty library radio (Popular, then A–Z) → music_assistant.search media_type [radio] fallback', libCalls.length >= 1 && libCalls[0].data.order_by === 'play_count_desc' && srch.some((c) => [c.data.media_type].flat().join() === 'radio' && c.rr) && g.src === 'search' && g.note, `${libCalls.map((c) => c.data.order_by)} ${JSON.stringify(srch[0]?.data)} src=${g.src}`);
+  check('16s station names trimmed (leading tabs/spaces), badged "Radio"', g.tiles.every((t) => t.name === t.name.trim() && !/\t/.test(t.name) && t.pv === 'Radio') && g.tiles.some((t) => t.name === 'Arrow Classic Rock') && g.tiles.some((t) => t.name === 'ROCKANTENNE Alternative (mp3)'), g.tiles.map((t) => JSON.stringify(t.name)).join(','));
+  const hr = g.tiles.find((t) => t.name === 'Hard Rock Radio FM');
+  await sleep(500);
+  const deadImg = await pg.evaluate((b) => [...eval(b).shadowRoot.querySelectorAll('.tile')].find((t) => t.querySelector('b').textContent.startsWith('ROCKANTENNE'))?.querySelector('img')?.src.slice(0, 26), BR);
+  check('16t null station image → radio-tower fallback; dead logo (404) swaps to it too', hr && hr.img.startsWith('data:image/svg+xml') && deadImg === 'data:image/svg+xml;charset', `${hr?.img.slice(0, 30)} dead=${deadImg}`);
+  const st = g.tiles.find((t) => t.name === 'Arrow Classic Rock');
+  const stEl = `[...${BR}.shadowRoot.querySelectorAll('.tile')].find((x) => x.dataset.uri === '${st?.uri}')`;
+  let pr = await pq(async () => { const r = await rectOf(pg, stEl); await pg.mouse.click(r.x - r.w / 4, r.y - r.h / 4); });
+  check('16u tap a station → play_media {radiobrowser://radio/<uuid>, media_type radio} on everywhere, no radio_mode', pr.length === 1 && pr[0].s === 'play_media' && tgt(pr[0]) === EV && /^radiobrowser:\/\/radio\/[0-9a-f-]{36}$/.test(pr[0].data.media_id) && pr[0].data.media_type === 'radio' && !('radio_mode' in pr[0].data), JSON.stringify(pr));
+  await pg.evaluate(() => { __card.shadowRoot.querySelector('[data-tab="now"]').click(); }); await sleep(500);
+  a = await artState();
+  check('16v Now Playing shows the station (title trimmed) with its art', /Arrow Classic Rock/.test(await pg.evaluate(() => __card.shadowRoot.querySelector('jb-now').shadowRoot.textContent)) && !!a.now, a.now.slice(0, 40));
+  await pg.evaluate(() => { __card.shadowRoot.querySelector('[data-tab="browse"]').click(); }); await sleep(300);
+  let r0 = await rectOf(pg, `${BR}.shadowRoot.querySelector('.tile')`);
+  await pg.mouse.move(r0.x - r0.w / 4, r0.y - r0.h / 4); await pg.mouse.down(); await sleep(650); await pg.mouse.up(); await sleep(150);
+  let mi = await pg.evaluate((b) => [...eval(b).shadowRoot.querySelectorAll('.menu .mi')].map((e) => e.dataset.action), BR);
+  check('16w station menu: next/add/replace, no "Start radio"', !mi.includes('radio') && ['next', 'add', 'replace'].every((x) => mi.includes(x)), mi.join(','));
+  await pg.keyboard.press('Escape');
+  await open(pg, '&latency=20&tab=browse&radio=lib');
+  await pg.waitForFunction((b) => !!eval(b).shadowRoot.querySelector('[data-cat="radio"]'), { timeout: 4000 }, BR).catch(() => {});
+  n = await ncalls(pg);
+  await clickEl(pg, `${BR}.shadowRoot.querySelector('[data-cat="radio"]')`); await sleep(600);
+  cs = (await pcalls(n)).filter((c) => c.s === 'get_library');
+  g = await pg.evaluate((b) => ({ src: eval(b).shadowRoot.querySelector('.grid')?.dataset.src, first: eval(b).shadowRoot.querySelector('.tile b')?.textContent }), BR);
+  check('16x stations in the library: get_library radio, Popular (play_count_desc) first, no search fallback', g.src === 'library' && cs[0]?.data.order_by === 'play_count_desc' && g.first === 'Radio Paradise - Main Mix', `${JSON.stringify(g)} ${cs.map((c) => c.data.order_by)}`);
+  await clickEl(pg, `${BR}.shadowRoot.querySelector('[data-cat="album"]')`); await sleep(300);
+  cs = (await pcalls(n)).filter((c) => c.s === 'get_library' && c.data.media_type === 'album');
+  check('16y non-radio categories never get the radio-only sort', cs.length > 0 && cs.every((c) => c.data.order_by !== 'play_count_desc'), cs.map((c) => c.data.order_by).join());
+
+  // Search: radio group
+  await open(pg, '&latency=20&radio=1');
+  for (const c of 'ROCK') await tapKey(pg, keyIdFor(c));
+  await waitShown(pg, 'ROCK'); await sleep(300);
+  g = await pg.evaluate((sv) => { const r = eval(sv).shadowRoot; const grp = [...r.querySelectorAll('.grp')].find((x) => /radio/.test(x.className)); return { names: grp ? [...grp.querySelectorAll('b')].map((b) => b.textContent) : [], pv: grp ? [...new Set([...grp.querySelectorAll('.pv')].map((p) => p.textContent.trim()))] : [] }; }, H.sv);
+  check('16z Search radio results trimmed + badged Radio', g.names.length > 0 && g.names.every((x) => x === x.trim() && !/\t/.test(x)) && g.pv.join() === 'Radio', JSON.stringify(g));
+
+  // Phone: durations stay visible in rows
+  await open(pg, '&latency=20&tab=browse', { width: 390, height: 844, isMobile: true, hasTouch: true });
+  await detail({ media_type: 'album', uri: 'library://album/1448', name: 'Hotel California' }, 'album'); await sleep(400);
+  const ph = await pg.evaluate((b) => { const r = eval(b).shadowRoot.querySelector('.detail .row'); const du = r.querySelector('.du'), pv = r.querySelector('.pv'); return { du: du && getComputedStyle(du).display !== 'none' && du.getBoundingClientRect().width > 0 ? du.textContent.trim() : '', pv: pv ? getComputedStyle(pv).display : 'none', over: r.scrollWidth - r.clientWidth }; }, BR);
+  check('16za 390px phone: track rows keep the duration (provider badge hidden instead), no overflow', ph.du === '6:31' && ph.pv === 'none' && ph.over <= 1, JSON.stringify(ph));
+
+  // public-repo hygiene: fixtures are scrubbed
+  const fxText = ['ma-search-sample.json', 'ma-search-sample-radio.json', 'ma-library-radio-sample.json', 'mass-queue-tracks-sample.json'].map((f) => readFileSync(new URL(`../dev/fixtures/${f}`, import.meta.url), 'utf8')).join('\n');
+  check('16zb fixtures: provider instance ids scrubbed to --XXXXXXXX, no user_id / real context ids', /apple_music--XXXXXXXX/.test(fxText) && !/apple_music--(?!XXXXXXXX)[A-Za-z0-9]+/.test(fxText) && !/"user_id": "[0-9a-f]{32}"/.test(fxText) && (fxText.match(/\b01[0-9A-HJKMNP-TV-Z]{24}\b/g) || []).every((id) => /^01(MOCK|MASSQUEUE)/.test(id)));
+  await pg.close();
+}
 
 check('no page errors', pageErrors.length === 0, pageErrors.join(' | '));
 await browser.close();

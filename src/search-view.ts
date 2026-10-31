@@ -3,7 +3,7 @@ import { tokens, base } from './styles';
 import { icon } from './icons';
 import { providerLabel } from './providers';
 import { SearchEngine } from './search-engine';
-import { localRect } from './shared';
+import { localRect, imageOf, normItem } from './shared';
 import type { KeyDetail } from './keyboard';
 import './keyboard';
 import type { Enqueue, GroupKey, HomeAssistant, JukeboxCardConfig, MaItem, SearchResults } from './types';
@@ -32,13 +32,7 @@ const ART = [
 ];
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); };
 
-export function imageOf(it: MaItem): string {
-  const img: any = it.image ?? it.image_url ?? it.metadata?.images?.[0];
-  if (!img) return '';
-  if (typeof img === 'string') return img;
-  const p = img.url ?? img.path ?? '';
-  return typeof p === 'string' && /^(https?:|data:|\/)/.test(p) ? p : '';
-}
+export { imageOf };
 const artistNames = (it: MaItem) =>
   it.artists?.length ? it.artists.map((a) => (typeof a === 'string' ? a : a.name)).join(', ')
     : typeof it.artist === 'string' ? it.artist : it.artist?.name ?? '';
@@ -53,7 +47,7 @@ export function normaliseResponse(r: any): SearchResults {
     if (inner) d = inner;
   }
   const out: SearchResults = {};
-  for (const g of GROUPS) if (Array.isArray(d[g.key])) out[g.key] = d[g.key].filter((x: any) => x && x.uri && x.name);
+  for (const g of GROUPS) if (Array.isArray(d[g.key])) out[g.key] = d[g.key].filter((x: any) => x && x.uri && x.name).map(normItem).filter((x: MaItem) => x.name);
   return out;
 }
 
@@ -197,7 +191,7 @@ export class JbSearch extends LitElement {
     if (!this.hass) return;
     const entity_id = this.config.entity || 'media_player.everywhere';
     const data: Record<string, any> = { media_id: it.uri, media_type: this.mediaType(it, g), enqueue };
-    if (radio) data.radio_mode = true;
+    if (radio && data.media_type !== 'radio') data.radio_mode = true;
     this._menu = null;
     this.addRecent(this._shownQuery || this._query);
     const name = this.hass.states[entity_id]?.attributes?.friendly_name ?? 'Everywhere';
@@ -290,14 +284,14 @@ export class JbSearch extends LitElement {
       : nothing}</span>`;
   }
   private prov(it: MaItem) {
-    const p = providerLabel(it.uri, it.provider);
+    const p = it.media_type === 'radio' ? 'Radio' : providerLabel(it.uri, it.provider);
     return p ? html`<span class="pv">${p}</span>` : nothing;
   }
   private sub(it: MaItem, g: GroupKey) {
     if (g === 'tracks') return [artistNames(it), it.album?.name].filter(Boolean).join(' · ');
     if (g === 'albums') return artistNames(it);
     if (g === 'playlists') return it.owner ?? '';
-    if (g === 'radio') return it.metadata && (it.metadata as any).description ? (it.metadata as any).description : '';
+    if (g === 'radio') return it.metadata && (it.metadata as any).description ? (it.metadata as any).description : 'Live radio';
     return artistNames(it);
   }
 
@@ -362,7 +356,7 @@ export class JbSearch extends LitElement {
       ${btn('qnext', 'Play next', () => this.play(it, g, 'next'), 'next')}
       ${btn('qadd', 'Add to queue', () => this.play(it, g, 'add'), 'add')}
       ${btn('swap', 'Replace queue', () => this.play(it, g, 'replace'), 'replace')}
-      ${btn('radio', 'Start radio', () => this.play(it, g, 'play', true), 'radio')}
+      ${g === 'radio' ? nothing : btn('radio', 'Start radio', () => this.play(it, g, 'play', true), 'radio')}
       ${['artists', 'albums', 'playlists'].includes(g) ? btn('open', 'Open', () => this.openItem(it, g), 'open') : nothing}`;
     return html`<div class="scrim ${m.sheet ? 'dim' : ''}" @pointerdown=${(e: PointerEvent) => { e.preventDefault(); this.closeMenu(); }}></div>
       <div class="menu ${m.sheet ? 'sheet' : ''}" role="menu" aria-label="${it.name} options"

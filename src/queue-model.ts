@@ -1,5 +1,5 @@
 import type { HomeAssistant } from './types';
-import { unwrap } from './shared';
+import { unwrap, cleanName, safeImage } from './shared';
 
 /** One item from mass_queue.get_queue_items (v0.10.4: no duration). */
 export interface QueueItem {
@@ -59,14 +59,14 @@ export class QueueModel {
     const seq = ++this.seq;
     this.set({ loading: true });
     const entity = this.entity;
-    const items$ = hass.callService('mass_queue', 'get_queue_items', { entity, limit_before: 1, limit_after: this.limitAfter }, undefined, false, true);
+    const items$ = hass.callService('mass_queue', 'get_queue_items', { entity, limit_before: 1, limit_after: Number.isFinite(this.limitAfter) ? Math.max(1, Math.min(1000, Math.round(this.limitAfter))) : 200 }, undefined, false, true);
     const q$ = hass.callService('music_assistant', 'get_queue', {}, { entity_id: entity }, false, true).catch(() => undefined);
     try {
       const [ri, rq] = await Promise.all([items$, q$]);
       if (seq !== this.seq) return;
       const raw = unwrap(ri, entity);
       const items: QueueItem[] = (Array.isArray(raw) ? raw : []).filter((x: any) => x && x.queue_item_id != null)
-        .map((x: any) => ({ ...x, queue_item_id: String(x.queue_item_id), media_title: x.media_title ?? x.name ?? '' }));
+        .map((x: any) => ({ ...x, queue_item_id: String(x.queue_item_id), media_title: cleanName(x.media_title ?? x.name ?? ''), media_image: safeImage(x.media_image) || undefined }));
       const q = unwrap(rq, entity) ?? {};
       const curId = q?.current_item?.queue_item_id != null ? String(q.current_item.queue_item_id) : undefined;
       let current = curId ? items.findIndex((i) => i.queue_item_id === curId) : -1;

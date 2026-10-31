@@ -8,11 +8,11 @@ import './browse-view';
 import './queue-view';
 import './editor';
 import { QueueModel } from './queue-model';
-import { roomsOf } from './shared';
+import { roomsOf, playerArt } from './shared';
 import { resolveBackdrop, drawPreblurred, BACKDROPS, prefersReducedMotion, type BackdropMode } from './backdrop';
 import type { HomeAssistant, JukeboxCardConfig, TabId } from './types';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 const TABS: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'now', label: 'Now Playing', icon: 'disc' },
   { id: 'browse', label: 'Browse', icon: 'browse' },
@@ -31,6 +31,7 @@ export class JukeboxCard extends LitElement {
     _qcount: { state: true },
     _saver: { state: true },
     _bd: { state: true },
+    _qart: { state: true },
   };
   hass?: HomeAssistant;
   private _config!: JukeboxCardConfig;
@@ -38,6 +39,8 @@ export class JukeboxCard extends LitElement {
   private _now = new Date();
   private _clock?: number;
   private _qcount = 0;
+  /** current queue item's (https) image, the art fallback when the player has no relative entity_picture(_local) */
+  private _qart = '';
   /** '' | 'on' | 'waking' */
   private _saver = '';
   private _idleTimer?: number;
@@ -69,6 +72,8 @@ export class JukeboxCard extends LitElement {
 
   setConfig(config: JukeboxCardConfig) {
     if (!config) throw new Error('Invalid configuration');
+    if (config.mass_queue_entry_id !== undefined && typeof config.mass_queue_entry_id !== 'string')
+      throw new Error('jukebox-card: mass_queue_entry_id must be the mass_queue config entry id (a string).');
     if (!config.config_entry_id || typeof config.config_entry_id !== 'string')
       throw new Error('jukebox-card: config_entry_id is required (the Music Assistant config entry id).');
     if (!num(config.limit, 1, 50)) throw new Error('jukebox-card: limit must be between 1 and 50.');
@@ -113,7 +118,7 @@ export class JukeboxCard extends LitElement {
     this._clock = window.setInterval(() => (this._now = new Date()), 15000);
     // Belt and braces: if anything editable ever takes focus inside the card, drop it so no OS keyboard opens.
     this.renderRoot?.addEventListener?.('focusin', this.onFocusIn as EventListener);
-    this._qunsub = this.queue.subscribe(() => (this._qcount = this.queue.remaining)) as any;
+    this._qunsub = this.queue.subscribe(() => { this._qcount = this.queue.remaining; this._qart = this.art(); }) as any;
     this.addEventListener('pointerdown', this.onActivity, { capture: true });
     this.addEventListener('keydown', this.onActivity, { capture: true });
     this.addEventListener('jukebox-played', this.onPlayed as EventListener);
@@ -146,6 +151,11 @@ export class JukeboxCard extends LitElement {
     this.updateScale();
   }
   protected updated() { this.updateLight(); }
+  /** Now-playing art for the backdrop and screensaver (see playerArt: never an absolute entity_picture). */
+  private art() {
+    const ent = this.hass?.states[this._config?.entity ?? 'media_player.everywhere'];
+    return playerArt(ent?.attributes, this.queue.currentItem);
+  }
   /** Large-screen scale: the layout is designed around ~1280x800; on bigger panels zoom it so art/text grow instead of spreading thin. */
   private _scale = 1;
   private updateScale() {
@@ -164,7 +174,7 @@ export class JukeboxCard extends LitElement {
     if (this._bd !== 'light') return;
     const cv = this.renderRoot.querySelector('canvas.bdl') as HTMLCanvasElement | null;
     const np = this.renderRoot.querySelector('main.np') as HTMLElement | null;
-    const pic = this.hass?.states[this._config.entity!]?.attributes?.entity_picture as string | undefined;
+    const pic = this.art();
     if (!cv || !np) return;
     const w = np.clientWidth, h = np.clientHeight;
     const key = `${pic}|${Math.round((w / Math.max(1, h)) * 10)}`;
@@ -243,7 +253,7 @@ export class JukeboxCard extends LitElement {
   private renderSaver() {
     const ent = this.hass?.states[this._config.entity!];
     const at = ent?.attributes ?? {};
-    const pic = at.entity_picture as string | undefined;
+    const pic = this.art();
     const playing = ent?.state === 'playing' || ent?.state === 'paused';
     const lang = this.hass?.locale?.language || this.hass?.language || undefined;
     let date = '';
@@ -264,7 +274,7 @@ export class JukeboxCard extends LitElement {
   render() {
     if (!this._config) return nothing;
     const ent = this.hass?.states[this._config.entity!];
-    const pic = ent?.attributes?.entity_picture as string | undefined;
+    const pic = this.art();
     const name = ent?.attributes?.friendly_name ?? 'Everywhere';
     const rooms = roomsOf(this._config, this.hass).length;
     const bd = this._bd;

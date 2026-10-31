@@ -6,8 +6,16 @@
 //  - music_assistant.get_library -> {response:{items, limit, offset, order_by, media_type}}
 //  - music_assistant.get_queue (entity) -> {response:{<entity_id>: {current_index, current_item{queue_item_id,...}, items:<count>, shuffle_enabled, repeat_mode}}}
 //  - mass_queue.get_queue_items -> {response:{<entity_id>: [{queue_item_id, media_title, media_album_name, media_artist, media_content_id, media_image, favorite}]}}
-// URL params: latency, jitter, mode=fixed|inverse, real=1 (search returns the real "eagles" sample), radio=1 (demo radio stations;
-// default is the real situation: no radio provider, radio empty), idle=1 (nothing playing), empty=1 (empty library).
+//  - mass_queue.get_{album,artist,playlist}_tracks {config_entry_id, uri, page?} -> {response:{tracks:[{media_title, media_content_id,
+//    duration, media_image (https or ""), favorite, media_album_name, media_artist, position (playlists only, null)}]}}
+//  - radio items: {media_type:'radio', uri:'radiobrowser://radio/<uuid>', name (often with leading tabs/spaces), image (https or null)}
+//  - media_player.everywhere: entity_picture is an absolute LAN URL (not loadable from the kiosk); entity_picture_local is
+//    /api/media_player_proxy/... (served by dev/api/ in the harness).
+// URL params: latency, jitter, mode=fixed|inverse, real=1 (search returns the real "eagles" sample),
+// radio=1 (Radio Browser stations in search only; the library has none, as on the real server), radio=lib (stations in the library too),
+// default: no radio provider at all; mqpage=all|paged (mass_queue `page`: all = falsy page returns every track, page n = 50-track
+// page n, like mass_queue 0.10; paged = 0-based 50-track pages, page 0 included; ignore = page ignored, always everything),
+// idle=1 (nothing playing), empty=1 (empty library), noart=1 (player without entity_picture_local).
 
 const params = new URLSearchParams(location.search);
 export const mock = (window.__mock = {
@@ -19,8 +27,16 @@ export const mock = (window.__mock = {
 });
 window.__calls = [];
 const REAL = params.get('real') === '1';
-const RADIO = params.get('radio') === '1';
+const RADIO = params.get('radio') === '1' || params.get('radio') === 'lib';
+const RADIO_LIB = params.get('radio') === 'lib';
+const MQPAGE = params.get('mqpage') ?? 'all';
+const NOART = params.get('noart') === '1';
+const MQ_PAGE_SIZE = 50;
 const EMPTY = params.get('empty') === '1';
+const fixture = async (f) => (await fetch(new URL(`./fixtures/${f}`, import.meta.url))).json();
+// real mass_queue tracks (scrubbed): library://album/1448 (Hotel California, 9 tracks), library://playlist/158 (2 tracks)
+const realTracks = await fixture('mass-queue-tracks-sample.json').then((d) => Object.fromEntries(Object.values(d).map((v) => [v.uri, v.raw.result.response.tracks]))).catch(() => ({}));
+const realRadio = await fixture('ma-search-sample-radio.json').then((d) => d.result.response.radio).catch(() => []);
 const realSample = REAL ? (await (await fetch(new URL('./fixtures/ma-search-sample.json', import.meta.url))).json()).result.response : null;
 
 const PALETTE = [['#ff2e7e', '#ff9a3d'], ['#3b2cff', '#00d4c4'], ['#ffd23f', '#ff4f8b'], ['#00b37e', '#1e3cff'], ['#c42fd8', '#ffd23f'], ['#ff7a3d', '#7a2cff'], ['#0fd1ff', '#ff2e7e'], ['#7a2cff', '#00d4c4']];
@@ -53,7 +69,16 @@ function track(name, by, alb, dur, prov = 'library', version = '', fav = false) 
     artists: [nestedArtist(by, prov)], album: short('album', `${prov}://album/${h(alb) % 90000}`, alb, art(alb)), _duration: dur, _added: h(name + by) % 1000, _played: h(by + name) % 1000 };
 }
 const playlist = (name, prov = 'library', fav = false) => ({ media_type: 'playlist', uri: `${prov}://playlist/${nid()}`, name, version: '', image: art(name), favorite: fav, explicit: null, _added: h(name) % 1000 });
-const radio = (name, prov = 'radiobrowser') => ({ media_type: 'radio', uri: `${prov}://radio/${nid()}`, name, version: '', image: art(name), favorite: false, explicit: null, _added: h(name) % 1000 });
+const uuid = (s) => { const x = [0, 1, 2, 3].map((i) => h(s + i).toString(16).padStart(8, '0')).join(''); return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`; };
+// Radio Browser station as MA returns it: tab/space-padded name, https logo or null
+const radio = (name, logo, played = 0) => ({ media_type: 'radio', uri: `radiobrowser://radio/${uuid(name)}`, name, version: '',
+  image: logo === undefined ? `https://logos.radio.example/${h(name).toString(36)}.png` : logo, favorite: false, explicit: null, _added: h(name) % 1000, _played: played, _plays: played });
+const STATIONS = () => [
+  ...realRadio.map((x, i) => ({ ...x, _added: 900 - i, _played: 50 - i, _plays: 50 - i })),
+  radio('\tRadio Paradise - Main Mix', undefined, 80), radio(' \tJazz FM', undefined, 30), radio('Magic Radio\t', null, 12),
+  radio('\t\tKEXP 90.3 FM', undefined, 64), radio('BBC Radio 6 Music', undefined, 71), radio('\tSomaFM Groove Salad', undefined, 44),
+  radio('FIP Radio', null, 9), radio('\tAbsolute Classic Rock', undefined, 22), radio('NTS Radio 1 ', undefined, 5),
+];
 
 const CATALOG = {
   artists: [
@@ -91,12 +116,14 @@ const CATALOG = {
   ],
   playlists: [
     playlist('Mock Rock Essentials', 'library', true), playlist('Mockingbird Jazz Club', 'apple_music'), playlist('Monday Morning Mix'),
-    playlist('Motown Classics', 'apple_music'), playlist('Eagles'), playlist('Mellow Moods', 'library', true), playlist('Dinner Party'), playlist('Garage Workout', 'apple_music'),
+    playlist('Motown Classics', 'apple_music'), playlist('Eagles'), playlist('Long Drive'), playlist('Mellow Moods', 'library', true), playlist('Dinner Party'), playlist('Garage Workout', 'apple_music'),
   ],
-  radio: RADIO ? [radio('Mock FM 99.9'), radio('Mockingbird Jazz Radio', 'tunein'), radio('Jazz FM', 'tunein'), radio('Magic Radio'), radio('Radio Paradise')] : [],
+  radio: RADIO ? STATIONS() : [],
   podcasts: [],
   audiobooks: [],
 };
+// the real export's ids, so drill-down into "Hotel California" serves the real mass_queue response (9 tracks with durations)
+CATALOG.albums.find((x) => x.name === 'Hotel California').uri = 'library://album/1448';
 const KEYS = ['artists', 'albums', 'tracks', 'playlists', 'radio', 'audiobooks', 'podcasts'];
 const TYPE2KEY = { artist: 'artists', album: 'albums', track: 'tracks', playlist: 'playlists', radio: 'radio', audiobook: 'audiobooks', podcast: 'podcasts' };
 const pub = (it) => JSON.parse(JSON.stringify(it, (k, v) => (k.startsWith('_') ? undefined : v)));
@@ -108,8 +135,9 @@ const byUri = (uri) => allItems().find((i) => i.uri === uri || i._lib === uri);
 
 function search(name, limit, types) {
   const q = name.trim().toLowerCase();
-  const hay = (it) => [it.name, ...(it.artists ?? []).map((a) => a.name), it.album?.name ?? ''].join(' ').toLowerCase();
-  const score = (it) => (it.name.toLowerCase().startsWith(q) ? 0 : it.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(q)) ? 1 : 2);
+  // MA's Radio Browser search also matches tags/genre, so "radio" or "rock" finds stations without it in the name
+  const hay = (it) => [it.name, ...(it.artists ?? []).map((a) => a.name), it.album?.name ?? '', it.media_type === 'radio' ? 'radio rock fm' : ''].join(' ').toLowerCase();
+  const score = (it) => (it.name.trim().toLowerCase().startsWith(q) ? 0 : it.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(q)) ? 1 : 2);
   const want = new Set((types ?? Object.keys(TYPE2KEY)).map((t) => TYPE2KEY[t]));
   const out = {};
   for (const key of KEYS) out[key] = want.has(key) ? CATALOG[key].filter((it) => hay(it).includes(q)).sort((a, b) => score(a) - score(b)).slice(0, limit).map(pub) : [];
@@ -119,7 +147,7 @@ function library({ media_type, favorite, search: s, limit = 25, offset = 0, orde
   const key = TYPE2KEY[media_type];
   if (!key) throw new Error(`invalid media_type ${media_type}`);
   // Everything in the mock catalog is "in the library"; MA reports library items with library:// uris.
-  let items = EMPTY ? [] : CATALOG[key].map(libView);
+  let items = EMPTY || (key === 'radio' && !RADIO_LIB) ? [] : CATALOG[key].map(libView);
   if (favorite) items = items.filter((i) => i.favorite);
   if (s) items = items.filter((i) => i.name.toLowerCase().includes(String(s).toLowerCase()));
   const cmp = {
@@ -127,6 +155,8 @@ function library({ media_type, favorite, search: s, limit = 25, offset = 0, orde
     sort_name: (a, b) => a.name.replace(/^the /i, '').localeCompare(b.name.replace(/^the /i, '')),
     timestamp_added_desc: (a, b) => b._added - a._added, timestamp_added: (a, b) => a._added - b._added,
     last_played_desc: (a, b) => (b._played ?? b._added) - (a._played ?? a._added),
+    play_count_desc: (a, b) => (b._plays ?? 0) - (a._plays ?? 0) || a.name.localeCompare(b.name),
+    play_count: (a, b) => (a._plays ?? 0) - (b._plays ?? 0) || a.name.localeCompare(b.name),
   }[order_by] ?? ((a, b) => a.name.localeCompare(b.name));
   items = [...items].sort(cmp);
   return { items: items.slice(offset, offset + Math.min(500, limit)).map(pub), limit, offset, order_by, media_type };
@@ -155,11 +185,16 @@ function setState(id, state, attrs) {
 function syncNowPlaying(resetPos = true) {
   const cur = Q.items[Q.index];
   const e = st(EVERY);
-  if (!cur) { setState(EVERY, 'idle', { media_title: undefined, media_artist: undefined, media_album_name: undefined, media_content_id: undefined, entity_picture: undefined, media_duration: undefined, media_position: undefined }); return; }
+  if (!cur) { setState(EVERY, 'idle', { media_title: undefined, media_artist: undefined, media_album_name: undefined, media_content_id: undefined, entity_picture: undefined, entity_picture_local: undefined, media_duration: undefined, media_position: undefined }); return; }
   const t = cur._t;
+  // Like HA + MA: entity_picture is the MA server's absolute image URL (LAN http, blocked/unreachable on the kiosk),
+  // entity_picture_local goes through HA's media_player_proxy (here: dev/api/media_player_proxy/ fetch interception).
+  const tag = h(t.uri).toString(16);
   setState(EVERY, e?.state === 'idle' || !e ? 'playing' : e.state, {
     media_title: t.name, media_artist: (t.artists ?? []).map((a) => a.name).join(', '), media_album_name: t.album?.name, media_content_id: t.uri, media_content_type: 'music',
-    entity_picture: t.image, media_duration: t._duration ?? null,
+    entity_picture: `http://192.168.0.10:8095/imageproxy?path=${tag}&size=512`,
+    entity_picture_local: NOART ? undefined : `/api/media_player_proxy/${EVERY}?token=mock&cache=${tag}`,
+    media_content_type: t.media_type === 'radio' ? 'radio' : 'music', media_duration: t._duration ?? null,
     ...(resetPos ? { media_position: 0, media_position_updated_at: new Date().toISOString() } : {}),
   });
 }
@@ -184,12 +219,16 @@ function delayFor(name) {
 }
 const ids = (target) => [target?.entity_id].flat().filter(Boolean);
 const posNow = (a, s) => (a.media_position ?? 0) + (s === 'playing' && a.media_position_updated_at ? (Date.now() - Date.parse(a.media_position_updated_at)) / 1000 : 0);
+// 120 unique tracks, for playlist paging
+const LONG_DRIVE = Array.from({ length: 120 }, (_, i) => track(`Highway Song ${String(i + 1).padStart(3, '0')}`, ['Eagles', 'Fleetwood Mac', 'Daft Punk', 'Air'][i % 4], 'Long Drive Sessions', 150 + ((i * 37) % 200)));
 const tracksFor = (it) => {
   if (!it) return [];
   if (it.media_type === 'track') return [it];
   if (it.media_type === 'album') return libTracks.filter((t) => t.album?.name === it.name);
   if (it.media_type === 'artist') return libTracks.filter((t) => t.artists.some((a) => a.name === it.name));
+  if (it.media_type === 'playlist' && it.name === 'Long Drive') return LONG_DRIVE;
   if (it.media_type === 'playlist') return libTracks.filter((_, i) => (h(it.name) + i) % 4 === 0).slice(0, 12);
+  if (it.media_type === 'radio') return [it];
   return [];
 };
 
@@ -232,6 +271,7 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     const uris = [data.media_id].flat();
     let add = uris.flatMap((u) => tracksFor(byUri(u) ?? (realSample ? null : null)));
     if (!add.length) add = [libTracks[h(uris[0]) % libTracks.length]];
+    if (data.radio_mode && (data.media_type === 'radio' || uris.some((u) => /:\/\/radio\//.test(u)))) throw new Error('radio_mode is not supported for radio stations');
     if (data.radio_mode) add = [...add, ...libTracks.filter((t) => !add.includes(t)).slice(0, 8)];
     const items = add.map(qItem);
     const at = Q.index + 1;
@@ -281,8 +321,16 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     if (service.startsWith('get_') && service.endsWith('_tracks')) {
       needResp();
       if (!data.config_entry_id || !data.uri) throw new Error('config_entry_id and uri required');
+      if (data.page !== undefined && (!Number.isInteger(data.page) || data.page < 0 || data.page > 1000)) throw new Error('page must be 0..1000');
       const it = byUri(data.uri);
-      return { context: ctx, response: { tracks: tracksFor(it).map((t) => ({ ...qPub({ queue_item_id: '', _t: t }), duration: t._duration })).map(({ queue_item_id, ...r }) => r) } };
+      const pl = service === 'get_playlist_tracks';
+      let all = realTracks[data.uri] ? structuredClone(realTracks[data.uri])
+        : tracksFor(it).map((t) => ({ media_title: t.name, media_content_id: t.uri, duration: t._duration ?? 0,
+          media_image: t.image ?? '', favorite: !!t.favorite, media_album_name: t.album?.name ?? '', media_artist: (t.artists ?? []).map((a) => a.name).join(', '),
+          ...(pl ? { position: null } : {}) }));
+      // mass_queue: `if not page` -> every track; otherwise MA's page
+      if (pl && data.page !== undefined && MQPAGE !== 'ignore' && (data.page || MQPAGE === 'paged')) all = all.slice(data.page * MQ_PAGE_SIZE, (data.page + 1) * MQ_PAGE_SIZE);
+      return { context: ctx, response: { tracks: all } };
     }
     const ent = data.entity;
     if (ent !== EVERY) throw new Error(`mass_queue: ${ent} is not a Music Assistant player`);

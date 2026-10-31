@@ -11,8 +11,8 @@ const LABELS: Record<string, string> = {
   youtube_music: 'YT Music',
   soundcloud: 'SoundCloud',
   tunein: 'TuneIn',
-  radiobrowser: 'Radio Browser',
-  radio_browser: 'Radio Browser',
+  radiobrowser: 'Radio',
+  radio_browser: 'Radio',
   plex: 'Plex',
   jellyfin: 'Jellyfin',
   opensubsonic: 'Subsonic',
@@ -40,6 +40,8 @@ export function providerKey(uri: string | undefined): string {
 export function providerLabel(uri: string | undefined, fallback?: string): string {
   const key = providerKey(uri) || (fallback ?? '').toLowerCase().split('--')[0];
   if (!key) return '';
+  // any provider's radio station (radiobrowser://radio/<uuid>, tunein://radio/...) is badged plainly as Radio
+  if (key !== 'library' && /^[a-z0-9_\-]+:\/\/radio\//i.test(uri ?? '')) return 'Radio';
   if (LABELS[key]) return LABELS[key];
   return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }

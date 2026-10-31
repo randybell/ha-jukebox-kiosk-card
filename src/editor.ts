@@ -10,7 +10,7 @@ const SCHEMA = [
   { name: 'config_entry_id', required: true, selector: { text: {} } },
   { name: 'rooms', selector: { entity: { domain: 'media_player', multiple: true } } },
   { name: 'favorite_entity', selector: { entity: { domain: ['button', 'input_button', 'script'] } } },
-  { name: 'queue_config_entry_id', selector: { text: {} } },
+  { name: 'mass_queue_entry_id', selector: { text: {} } },
   { name: 'screensaver_minutes', selector: { number: { min: 0, max: 240, mode: 'box', unit_of_measurement: 'min' } } },
   { name: 'limit', selector: { number: { min: 1, max: 25, mode: 'box' } } },
   { name: 'browse_limit', selector: { number: { min: 10, max: 500, mode: 'box' } } },
@@ -23,7 +23,7 @@ const LABELS: Record<string, string> = {
   config_entry_id: 'Music Assistant config entry id',
   rooms: 'Room players (volume sliders)',
   favorite_entity: 'Favorite button',
-  queue_config_entry_id: 'mass_queue config entry id (Browse drill-down)',
+  mass_queue_entry_id: 'mass_queue config entry id (Browse drill-down; not the Music Assistant one)',
   screensaver_minutes: 'Screensaver after (0 = off)',
   limit: 'Search results per type (1-letter queries use 5)',
   browse_limit: 'Browse page size',
@@ -37,7 +37,11 @@ export class JukeboxCardEditor extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true } };
   hass?: HomeAssistant;
   private _config?: JukeboxCardConfig;
-  setConfig(c: JukeboxCardConfig) { this._config = c; }
+  setConfig(c: JukeboxCardConfig) {
+    // show the 0.3.0 key under its new name; saving writes mass_queue_entry_id
+    if (c && c.queue_config_entry_id && !c.mass_queue_entry_id) { const { queue_config_entry_id, ...rest } = c; c = { ...rest, mass_queue_entry_id: queue_config_entry_id } as JukeboxCardConfig; }
+    this._config = c;
+  }
   private changed(e: CustomEvent) {
     const v = { ...e.detail.value } as JukeboxCardConfig;
     const prev = new Map((this._config?.rooms ?? []).map((r) => [roomEntity(r), r] as const));
