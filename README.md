@@ -23,7 +23,7 @@ Search has no text input. You type on the on-screen keyboard, which works like t
 
 Nothing in this repository talks to a real Home Assistant server. Development and tests run against `dev/mock-hass.js`.
 
-The repository is `ha-jukebox-card` (private for now; HACS-ready for when it goes public). The card's element is `custom:jukebox-card`, and its file is `jukebox-card.js`.
+The repository is `randybell/ha-jukebox-kiosk-card`. The card's element is `custom:jukebox-card`, and its file is `jukebox-card.js`.
 
 ## Build
 
@@ -80,8 +80,8 @@ Every call is recorded in `window.__calls`. `test/run.mjs` drives the card with 
 
 ### HACS (once the repository is public, or added with access)
 
-1. HACS → ⋮ → **Custom repositories** → `https://github.com/<you>/ha-jukebox-card`, category **Dashboard**.
-2. Install **Jukebox Card**. HACS downloads `jukebox-card.js` from the latest GitHub release (built by `.github/workflows/release.yml` when a `v*` tag is pushed) and adds the resource `/hacsfiles/ha-jukebox-card/jukebox-card.js`.
+1. HACS → ⋮ → **Custom repositories** → `https://github.com/randybell/ha-jukebox-kiosk-card`, category **Dashboard**.
+2. Install **Jukebox Card**. HACS downloads `jukebox-card.js` from the latest GitHub release (built by `.github/workflows/release.yml` when a `v*` tag is pushed) and adds the resource `/hacsfiles/ha-jukebox-kiosk-card/jukebox-card.js`.
 3. Fonts: HACS only downloads `.js` files, so without fonts the card uses the system UI font. For the intended Inter / Plus Jakarta Sans, unzip `jukebox-card-fonts.zip` from the same release into `/config/www/jukebox/fonts/` and set `font_base: /local/jukebox/fonts`.
 
 ### Manual
@@ -286,7 +286,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 
 ## Repository, releases and HACS
 
-- `hacs.json`: `{"name": "Jukebox Card", "filename": "jukebox-card.js", "render_readme": true}`. `filename` lets HACS find `jukebox-card.js` even though the repo is called `ha-jukebox-card`.
+- `hacs.json`: `{"name": "Jukebox Card", "filename": "jukebox-card.js", "render_readme": true}`. `filename` lets HACS find `jukebox-card.js` even though the repo is called `ha-jukebox-kiosk-card`.
 - `dist/` is **not committed**. `.github/workflows/release.yml` runs on a `v*` tag: `npm ci`, typecheck, build, then it attaches `dist/jukebox-card.js` and `jukebox-card-fonts.zip` to a GitHub release. HACS installs from the latest release's assets.
   - Why: committed build output makes every diff noisy, goes stale when someone forgets to rebuild, and is easy to mismatch with the source. A tag-built release always matches its tag, HACS lets users pick from the last 5 releases, and the repo stays small.
   - To release: bump `version` in `package.json` and `VERSION` in `src/jukebox-card.ts`, commit, then `git tag v0.3.0 && git push --tags`.
