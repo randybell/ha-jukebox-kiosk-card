@@ -1,6 +1,6 @@
 {
   "name": "ha-jukebox-card",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Jukebox Card: kiosk jukebox card for Home Assistant + Music Assistant (Now Playing, Browse, Search, Queue, screensaver)",
   "repository": {
     "type": "git",

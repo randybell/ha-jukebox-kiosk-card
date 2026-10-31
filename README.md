@@ -1,4 +1,4 @@
-# Jukebox Card (`ha-jukebox-card`) 0.3.0
+# Jukebox Card (`ha-jukebox-kiosk-card`) 0.3.1
 
 This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox kiosk. It uses the Black Frame Mono look: black header and footer, the album art blurred behind the centre, white active buttons and light-white inactive ones.
 
@@ -11,6 +11,8 @@ This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox ki
 | ![Browse](docs/browse-1920x1080.png) | ![Screensaver](docs/screensaver-1920x1080.png) |
 | **Portrait tablet (820x1180)** | **Phone (390x844)** |
 | ![Portrait](docs/now-820x1180.png) | ![Phone](docs/search-390x844.png) |
+| **Browse > Radio (1280x800)** | **Album with durations (1280x800)** |
+| ![Radio](docs/browse-radio-1280x800.png) | ![Album](docs/browse-album-1280x800.png) |
 
 **What it has:**
 - all four tabs: **Now Playing**, **Browse**, **Search** and **Queue**
@@ -40,7 +42,7 @@ npm run typecheck     # tsc --noEmit
 ```bash
 python3 -m http.server 8765 --bind 127.0.0.1     # from the project root; the harness won't run from file://
 # open http://127.0.0.1:8765/dev/index.html?log=1
-npm test                                           # 67 end-to-end checks (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
+npm test                                           # 95 end-to-end checks (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
 node test/shots-m2.mjs f1                          # every tab at 1920x1080, 1280x800, 820x1180 and 390x844 -> test/shots/m2/
 JB_SIZES=1920x1080 node test/shots-m2.mjs x1 '&backdrop=light'   # one size, one mode
 node test/perf.mjs 3                               # frame-time benchmark, see "Backdrop and performance"
@@ -51,6 +53,9 @@ node test/perf.mjs 3                               # frame-time benchmark, see "
 - Items carry no provider field; the provider comes from the URI scheme (`library://`, `apple_music://`, `apple_music--XXXXXXXX://`).
 - `get_library` returns `{items, limit, offset, order_by, media_type}` with `library://` URIs.
 - `mass_queue.get_queue_items` returns a list keyed by entity.
+- `mass_queue.get_album_tracks` / `get_playlist_tracks` return the real 0.10.x shape (`{tracks: [{media_title, media_artist, media_album_name, media_content_id, media_image, duration, favorite, position}]}`); `library://album/1448` and `library://playlist/158` answer with the real exports in `dev/fixtures/mass-queue-tracks-sample.json`.
+- The player has an absolute `entity_picture` (`http://<ma-host>:8095/imageproxy?…`) and a relative `entity_picture_local`, as on the real system.
+- The fixtures are scrubbed: provider instance ids are `--XXXXXXXX`, HA context ids are placeholders and `user_id` is `null`.
 - `play_media` is rejected unless the target is `media_player.everywhere`.
 - Every service call changes the mock state and pushes a new `hass`, as HA does.
 
@@ -62,11 +67,15 @@ URL parameters:
 | `mode=inverse` | shorter queries reply more slowly, which forces out-of-order replies |
 | `fail=1` | the mock search fails |
 | `real=1` | search returns the real "eagles" export from `dev/fixtures/ma-search-sample.json` |
-| `radio=1` | adds demo radio stations (by default radio is empty, as on the real system) |
+| `radio=1` | Radio Browser stations in search only (library radio stays empty, so Browse > Radio uses the search fallback) |
+| `radio=lib` | the same stations also in the library (`get_library media_type: radio`) |
+| `mqpage=all\|paged\|ignore` | how `get_*_tracks` treats `page`: `all` (default, mass_queue 0.10: page 0 = everything), `paged` (50 per page), `ignore` (every page returns the same list) |
+| `noart=1` | the player has no `entity_picture_local`, so art falls back to the queue item's https image |
+| `legacyq=1` | configures the old `queue_config_entry_id` key instead of `mass_queue_entry_id` |
 | `idle=1` / `paused=1` | nothing playing / paused |
 | `empty=1` | empty library and queue |
 | `qfail=1` | `mass_queue.get_queue_items` fails |
-| `noqueue=1` | no `queue_config_entry_id`, so drill-down uses the search fallback |
+| `noqueue=1` | no `mass_queue_entry_id`, so drill-down uses the search fallback |
 | `saver=min` | `screensaver_minutes`; for example `saver=0.05` is 3 seconds |
 | `recents=1` | seeds the recent-search chips |
 | `fresh=1` | clears localStorage |
@@ -74,11 +83,11 @@ URL parameters:
 | `tab=now\|browse\|search\|queue` | opens that tab (default `now`) |
 | `backdrop=auto\|full\|light\|static\|off` | sets the `backdrop` option |
 
-Every call is recorded in `window.__calls`. `test/run.mjs` drives the card with real CDP mouse, touch and keyboard input and writes `test/shots/results.json`.
+Every call is recorded in `window.__calls`. `test/run.mjs` drives the card with real CDP mouse, touch and keyboard input and writes `test/shots/results.json`. The browser tests are hermetic (`test/intercept.mjs`): `/api/media_player_proxy/…` and https images are answered with a generated SVG, and any request to a plain-http host other than the dev server fails (test 16o checks that the card never asks the MA host directly).
 
 ## Install on Home Assistant (nothing here touches your server)
 
-### HACS (once the repository is public, or added with access)
+### HACS
 
 1. HACS → ⋮ → **Custom repositories** → `https://github.com/randybell/ha-jukebox-kiosk-card`, category **Dashboard**.
 2. Install **Jukebox Card**. HACS downloads `jukebox-card.js` from the latest GitHub release (built by `.github/workflows/release.yml` when a `v*` tag is pushed) and adds the resource `/hacsfiles/ha-jukebox-kiosk-card/jukebox-card.js`.
@@ -87,7 +96,7 @@ Every call is recorded in `window.__calls`. `test/run.mjs` drives the card with 
 ### Manual
 
 1. Download `jukebox-card.js` and `jukebox-card-fonts.zip` from a release (or run `npm run build`) and put them in `/config/www/jukebox/` as `jukebox-card.js` and `fonts/`.
-2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.3.0`, type **JavaScript module**.
+2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.3.1`, type **JavaScript module**.
    - Change `?v=` on every update, or Fully Kiosk will keep the old file.
    - Fonts are found in `fonts/` next to the `.js` automatically.
 
@@ -104,7 +113,7 @@ views:
       - type: custom:jukebox-card
         entity: media_player.everywhere                # MA group player; every play_media goes here
         config_entry_id: <music assistant entry id>    # Settings → Devices & services → Music Assistant (id is in the URL)
-        queue_config_entry_id: <mass_queue entry id>   # optional, enables album/artist/playlist drill-down
+        mass_queue_entry_id: <mass_queue entry id>     # optional, enables album/artist/playlist track lists
         favorite_entity: button.everywhere_favorite_current_song
         rooms:
           - { name: Living Room, entity: media_player.living_room }
@@ -123,10 +132,10 @@ views:
 | `config_entry_id` | (required) | MA config entry for `music_assistant.search` / `get_library` |
 | `rooms` | `[]` | `[{name, entity, icon?}]`, or bare entity ids (the name then comes from `friendly_name`). Each room gets its own volume slider |
 | `favorite_entity` | `button.everywhere_favorite_current_song` | Pressed by the heart (button, input_button or script). `''` hides the heart |
-| `queue_config_entry_id` | — | mass_queue config entry, used for `mass_queue.get_album_tracks / get_artist_tracks / get_playlist_tracks` |
+| `mass_queue_entry_id` | — | mass_queue (Music Assistant Queue Actions) config entry, used for `mass_queue.get_album_tracks / get_artist_tracks / get_playlist_tracks`. The 0.3.0 name `queue_config_entry_id` is still accepted, and the visual editor rewrites it to the new key |
 | `screensaver_minutes` | `10` (0–1440) | Idle minutes before the screensaver. `0` turns it off |
 | `browse_limit` | `60` (1–500) | Items per Browse page (infinite scroll pages by `offset`) |
-| `queue_limit` | `200` | Upcoming items requested from `get_queue_items` (`limit_after`) |
+| `queue_limit` | `200` (1–1000) | Upcoming items requested from `get_queue_items` (`limit_after`); out-of-range values are clamped |
 | `limit` | `8` (1–50) | Search results per type. 1-character queries always use 5 |
 | `default_tab` | `now` | `now`, `browse`, `search` or `queue` |
 | `library_only` | `false` | Search only the MA library |
@@ -154,7 +163,7 @@ The full look puts a 38 px live blur of the album art behind the whole centre an
 
 - The resolved mode and the reason are on the element: `<jukebox-card data-backdrop="light" data-backdrop-why="hardwareConcurrency=4">`. Use this to check what a Fully Kiosk tablet picked (Fully's remote admin → "Get page source" or a remote DevTools session).
 - `light` needs no CORS: drawing a cross-origin image into a canvas is allowed as long as nothing reads the pixels back, and the card never does. If an image fails to load, the canvas stays hidden and the gradient shows.
-- `light` redraws only when `entity_picture` changes or the screen's aspect ratio changes, never on slider drags or key presses (test 15c).
+- `light` redraws only when the art URL changes or the screen's aspect ratio changes, never on slider drags or key presses (test 15c).
 - Theme overrides: `--jb-panel-filter` (default `blur(14px)`, `none` in non-full modes) and `--jb-surface` / `--jb-panel-solid` for the panel colour.
 - The screensaver shows the art (unblurred, so no filter cost) in `full` and `light`, and plain black in `static` and `off`.
 
@@ -183,6 +192,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 
 ## Now Playing
 
+- **Art.** The card never loads the player's absolute `entity_picture` (`http://<ma-host>:8095/imageproxy?…` is mixed content on an https dashboard and unreachable off the LAN). It uses, in order: `entity_picture_local` (HA's relative `/api/media_player_proxy/…` URL), a relative `entity_picture`, the current mass_queue item's https `media_image`, then the placeholder. The same URL feeds Now Playing, both backdrops (`full` and `light`) and the screensaver. Radio streams with no art get a radio-tower image. Item images are used only when they are https, `data:image` or relative.
 - **Display.** The album art is blurred behind the card. The tab shows the art, title, artist · album, a provider badge from the URI scheme and "Playing on Everywhere".
 - **Seek bar.** Tap or drag it to send `media_player.media_seek {seek_position}`. The time label follows the drag.
 - **Transport.** All transport calls target `entity` only:
@@ -196,7 +206,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
   | Repeat | `repeat_set {repeat}`, cycling off → all → one → off |
 
   Active shuffle and repeat are white with a dot under them; inactive ones are light white. The UI updates optimistically and reconciles when HA reports the new state.
-- **Heart.** If the current song isn't a favorite, the heart sends `button.press` to `favorite_entity`. If it already is (from mass_queue's `favorite` flag), it sends `mass_queue.unfavorite_current_item {entity}`.
+- **Heart.** If the current song isn't a favorite, the heart sends `button.press` to `favorite_entity`. If it already is (from mass_queue's `favorite` flag), it sends `mass_queue.unfavorite_current_item {entity}` (this may only work for library items).
 - **Up next strip.** It shows the next queue item and "+ N more". Tapping it opens the Queue tab.
 - **Volume:**
   - **Everywhere** sends `volume_set` to the group player.
@@ -209,7 +219,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 
 ## Queue (mass_queue 0.10.4)
 
-- **Reading.** The queue comes from `mass_queue.get_queue_items {entity, limit_before: 1, limit_after: queue_limit}` with `return_response`. It refreshes when the tab opens, when the track, state or shuffle changes, and after every action.
+- **Reading.** The queue comes from `mass_queue.get_queue_items {entity, limit_before: 1, limit_after: queue_limit (1–1000)}` with `return_response`. It refreshes when the tab opens, when the track, state or shuffle changes, and after every action.
 - **Layout.** The previous track is dimmed. "Now playing" is the highlighted white row, then a numbered "Up next" list. "+ N more in Music Assistant" appears when the queue is longer than the list.
 - **Tap a row** to send `mass_queue.play_queue_item {entity, queue_item_id}`.
 - **Row buttons.** ↑ and ↓ send `move_queue_item_up` and `move_queue_item_down`; they are hidden on phones. **⋮** or a long-press opens a menu: Play now, Play next (`move_queue_item_next`), Move up, Move down, Remove (`remove_queue_item`). Every action sends exactly `{entity, queue_item_id}`.
@@ -220,14 +230,16 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 - **Categories:** Playlists, Albums, Artists, Tracks, Radio, Podcasts and Audiobooks, plus a **Favorites** toggle.
   - Each call is `music_assistant.get_library {config_entry_id, media_type, favorite?, limit, offset, order_by}` with `return_response`.
   - At start the card makes one `limit: 1` call per category and **hides the categories that are empty**, such as Radio, Podcasts and Audiobooks on the current system.
-- **Sort chip:** A–Z (`name`), then Recently added (`timestamp_added_desc`), then Recently played (`last_played_desc`).
+- **Sort chip:** A–Z (`name`), then Recently added (`timestamp_added_desc`), then Recently played (`last_played_desc`). Radio sorts by Popular (`play_count_desc`; `get_library` has no popularity order, so this is your own play count), then A–Z.
 - **Layout.** Tile grid with provider badges; tracks show as rows. Pages are cached per category, favorite and sort, and load more on scroll.
-- **Tap** to play now with `play_media`. **Long-press** opens a menu: Open, Play next, Add to queue, Replace queue, Start radio.
+- **Tap** to play now with `play_media`. **Long-press** opens a menu: Open, Play next, Add to queue, Replace queue, Start radio (not shown for radio stations).
+- **Radio.** Browse > Radio lists `get_library {media_type: radio}`. If the library has no stations (Radio Browser stations you haven't saved), it falls back to `music_assistant.search {name: radio, media_type: [radio]}` and says so above the grid. Station names are trimmed (Radio Browser pads some with tabs), every station has a **Radio** badge, and a station with no logo or a dead logo gets a radio-tower image. A tap sends `play_media {media_id: radiobrowser://radio/…, media_type: radio, enqueue: play}` to `media_player.everywhere`, never with `radio_mode`.
 - **Drill-down.** The › button on artist, album and playlist tiles, or Open in the menu, opens a detail page:
   - a back button, Play, Add to queue and Radio (`radio_mode: true`), and a track list (tap a track to play it)
-  - with `queue_config_entry_id`, tracks come from `mass_queue.get_album_tracks` / `get_artist_tracks` / `get_playlist_tracks {config_entry_id, uri}`
+  - with `mass_queue_entry_id`, tracks come from `mass_queue.get_album_tracks` / `get_artist_tracks` / `get_playlist_tracks {config_entry_id: <mass_queue entry>, uri[, page]}` with `return_response`. Each row shows its duration, and the header shows the count and total time ("9 tracks · 43 min", with "+" while more pages may follow)
+  - playlists are paged: the card asks for `page: 0` first, then `page: 1, 2, …` (0–1000) when you scroll to the end or tap **Load more tracks**. mass_queue 0.10 returns the whole playlist for page 0, so usually there is one call; paging stops on an empty page, a page shorter than the first, or a page that repeats tracks already shown
   - artists also get an Albums row from `music_assistant.search`
-  - without `queue_config_entry_id`, albums and artists fall back to a search, labelled "matched by search", and playlists show a note that mass_queue is needed
+  - without `mass_queue_entry_id`, albums and artists fall back to a search, labelled "matched by search", and playlists show a note that mass_queue is needed
 - **Search's Open action** jumps to the same detail page.
 - **Target.** Every `play_media` goes to `media_player.everywhere`. The room players (WiiM) are only volume targets.
 
@@ -248,7 +260,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 - **No blank flash.** The old results stay on screen until the new ones arrive. A thin hairline under the query bar shows a search is loading.
 - **Cache.** Up to 100 queries are kept for 5 minutes (LRU). Backspacing back to an earlier query shows its results instantly, without a new call.
 - **Slow Music Assistant.** If a reply takes more than `slow_ms` (800 ms), the card keeps one call in flight and queues only the latest query. Keystrokes in between are merged into that one.
-- **Results.** They are grouped as Artists, Albums, Tracks, Playlists, Radio, Audiobooks and Podcasts, with filter chips. **Empty groups and their chips are hidden**, so Radio (no radio provider on the real system), Audiobooks and Podcasts don't show. Each item has a provider badge taken from its URI scheme, because MA items have no provider field (`library://…` → LIBRARY, `apple_music://…` and `apple_music--XXXXXXXX://…` → APPLE MUSIC).
+- **Results.** They are grouped as Artists, Albums, Tracks, Playlists, Radio, Audiobooks and Podcasts, with filter chips. **Empty groups and their chips are hidden**, so Radio (when no radio provider answers), Audiobooks and Podcasts don't show. Radio items get a **Radio** badge, a 'Live radio' subtitle, and no Start radio action. Each item has a provider badge taken from its URI scheme, because MA items have no provider field (`library://…` → LIBRARY, `apple_music://…` and `apple_music--XXXXXXXX://…` → APPLE MUSIC).
 - **Tap** plays now: `enqueue: play`.
 - **Long-press** (500 ms) or **⋮** opens a menu:
 
@@ -282,34 +294,35 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 - **Focus.** No keyboard ever pops up: there is no input, textarea or contenteditable element anywhere. Every button is `tabindex=-1` and calls `preventDefault` on pointerdown. A focusin guard blurs anything editable.
 
 
-**Radio, audiobooks and podcasts.** These groups (and their filter chips) are hidden whenever they come back empty, which is the case on the current system. Radio Browser is being added to Music Assistant, so radio stations will start appearing in search results; the empty-hide logic stays, so the Radio group and chip show up only when there are results. Try it in the harness with `?radio=1`.
+**Radio, audiobooks and podcasts.** These groups (and their filter chips) are hidden whenever they come back empty. With Radio Browser in Music Assistant, stations appear in search results (`radiobrowser://radio/<uuid>`) and in Browse > Radio. Try it in the harness with `?radio=1` or `?radio=lib`.
 
 ## Repository, releases and HACS
 
 - `hacs.json`: `{"name": "Jukebox Card", "filename": "jukebox-card.js", "render_readme": true}`. `filename` lets HACS find `jukebox-card.js` even though the repo is called `ha-jukebox-kiosk-card`.
 - `dist/` is **not committed**. `.github/workflows/release.yml` runs on a `v*` tag: `npm ci`, typecheck, build, then it attaches `dist/jukebox-card.js` and `jukebox-card-fonts.zip` to a GitHub release. HACS installs from the latest release's assets.
   - Why: committed build output makes every diff noisy, goes stale when someone forgets to rebuild, and is easy to mismatch with the source. A tag-built release always matches its tag, HACS lets users pick from the last 5 releases, and the repo stays small.
-  - To release: bump `version` in `package.json` and `VERSION` in `src/jukebox-card.ts`, commit, then `git tag v0.3.0 && git push --tags`.
+  - To release: bump `version` in `package.json` and `VERSION` in `src/jukebox-card.ts`, commit, then `git tag v0.3.1 && git push --tags`.
 - `test/shots/` (generated by the tests and screenshot scripts) is git-ignored; the curated screenshots used in this README are in `docs/`.
 - License: MIT (`LICENSE`). The bundled fonts are OFL (licence files ship in `dist/fonts/` and the fonts zip).
 
 ## Open questions (verify against the live system before relying on them)
 
-**Resolved this milestone** (from the real exports, 31 Oct 2026):
+**Resolved** (from the real exports, 31 Oct 2026):
 - the search response shape: `response` holding 7 lists
 - provider from the URI scheme
 - the enqueue values (`play, replace, next, replace_next, add`) and `radio_mode` as a boolean
 - the Music Assistant `config_entry_id` (kept out of the repo; see Install)
 - that non-admin users can call `return_response` services
+- the mass_queue track services: names, `{config_entry_id, uri, page?}` and the response shape (0.3.1 parses it, with durations)
+- Radio Browser item shape (tab-padded names, `null` images) and `play_media` with `media_type: radio`
+- player art: `entity_picture` is the absolute MA imageproxy URL, `entity_picture_local` the relative HA proxy (0.3.1 uses only the latter)
 - **the rooms**: WiiM `media_player.living_room`, `media_player.kitchen` and `media_player.garage` (Living Room / Kitchen / Garage Speaker), volume only, with `play_media` going to everywhere only
 
 **Still open:**
-1. **mass_queue `config_entry_id` for drill-down.** The `get_*_tracks` services take the *mass_queue* entry id, not the MA one. The dev harness uses a placeholder (`01MASSQUEUE0000000000000000`). Find the real id under Settings → Devices & services → Music Assistant Queue Actions; it is in the URL.
-2. **The `get_*_tracks` response shape is assumed.** The card reads `{tracks: [...]}` (or the same keyed by entity / under `response`), with track fields like `media_title`/`name`, `media_artist`/`artists`, `media_content_id`/`uri`, `media_image`/`image`, `duration`. Please run one in Developer Tools → Actions with a real album URI and send me the output.
-3. **No durations from search or get_library.** The real search export has no `duration`, so detail-page and track rows show no time unless mass_queue provides it. Now Playing uses `media_duration` from the entity.
-4. **`music_assistant.get_queue` on a group player.** The card doesn't need it (mass_queue covers the queue); it is only used as a fallback for the current index. Confirm it answers for `media_player.everywhere`.
-5. **mass_queue version.** The installed v0.10.4 manifest reports `0.10.3`. The service names used here are from 0.10.x; tell me if any action fails.
-6. **MA image URLs.** Artwork comes from MA (`http://<ma-host>:8095/imageproxy?...`) or the provider CDN. If HA is served over https, Fully Kiosk may block mixed-content http images. The card hides broken images, but a proxied https URL would be better.
-7. **Transport-dot convention.** Active shuffle and repeat are white with a dot, as in the mockup. Repeat-one uses the repeat-1 glyph and also has the dot.
-8. **Favorite state.** The heart reads `favorite` from the current mass_queue item. If MA is slow to report it after `button.press`, the card holds the optimistic state for 26 s.
-9. **Collapsing the keyboard on scroll** in portrait Search is not built yet.
+1. **mass_queue entry id.** The `get_*_tracks` services take the *mass_queue* entry id (`mass_queue_entry_id`), not the MA one. The dev harness uses a placeholder (`01MASSQUEUE0000000000000000`); the real id stays out of the repo.
+2. **`music_assistant.get_queue` on a group player.** The card doesn't need it (mass_queue covers the queue); it is only used as a fallback for the current index. Confirm it answers for `media_player.everywhere`.
+3. **mass_queue version.** The installed v0.10.4 manifest reports `0.10.3`. Its `page` handling (page 0 = all tracks) may change in later versions; the card's paging copes with full, paged and page-ignoring replies.
+4. **`unfavorite_current_item`** may only work when the current track is a library item.
+5. **Transport-dot convention.** Active shuffle and repeat are white with a dot, as in the mockup. Repeat-one uses the repeat-1 glyph and also has the dot.
+6. **Favorite state.** The heart reads `favorite` from the current mass_queue item. If MA is slow to report it after `button.press`, the card holds the optimistic state for 26 s.
+7. **Collapsing the keyboard on scroll** in portrait Search is not built yet.
