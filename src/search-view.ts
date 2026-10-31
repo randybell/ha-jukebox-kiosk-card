@@ -3,7 +3,12 @@ import { tokens, base } from './styles';
 import { icon } from './icons';
 import { providerLabel } from './providers';
 import { SearchEngine } from './search-engine';
-import { localRect, imageOf, normItem } from './shared';
+import {
+  imageOf, normItem, mediaStyles, artTpl, provTpl, artistNames, fmtDur, fire, PressController, menuPos, menuTpl,
+  playMedia, playMessage, drillable, canRadio, rowActsTpl, foldedActions, confirmTpl, type MenuAction, type MenuPos, type RowAct, type ConfirmState,
+} from './shared';
+import './detail-view';
+import type { DetailEntry } from './detail-view';
 import type { KeyDetail } from './keyboard';
 import './keyboard';
 import type { Enqueue, GroupKey, HomeAssistant, JukeboxCardConfig, MaItem, SearchResults } from './types';
@@ -20,24 +25,11 @@ const GROUPS: Array<{ key: GroupKey; label: string; type: string }> = [
 const SEARCH_TYPES = ['artist', 'album', 'track', 'playlist', 'radio', 'audiobook', 'podcast'];
 const RECENTS_KEY = 'jukebox-card:recents:v1';
 const MAX_RECENTS = 8;
-const LONG_PRESS_MS = 500;
-const MOVE_CANCEL_PX = 10;
 const MAX_QUERY = 60;
 
-interface MenuState { item: MaItem; group: GroupKey; sheet: boolean; top: number; right: number; up: boolean }
-
-const ART = [
-  'linear-gradient(135deg,#ff2e7e,#ff9a3d)', 'linear-gradient(135deg,#3b2cff,#00d4c4)', 'linear-gradient(135deg,#ffd23f,#ff4f8b)',
-  'linear-gradient(135deg,#00b37e,#1e3cff)', 'linear-gradient(135deg,#c42fd8,#ffd23f)', 'linear-gradient(135deg,#ff7a3d,#7a2cff)',
-];
-const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); };
+interface MenuState { item: MaItem; group: GroupKey; pos: MenuPos; actions: MenuAction[] }
 
 export { imageOf };
-const artistNames = (it: MaItem) =>
-  it.artists?.length ? it.artists.map((a) => (typeof a === 'string' ? a : a.name)).join(', ')
-    : typeof it.artist === 'string' ? it.artist : it.artist?.name ?? '';
-const fmtDur = (s?: number) => (s && s > 0 ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '');
-
 /** Accept {response:{...}}, a bare dict, or an entity-keyed dict. */
 export function normaliseResponse(r: any): SearchResults {
   // HA frontend callService -> {context, response}; raw WS -> {result: {response}}; bare dict also accepted.
@@ -66,7 +58,9 @@ export class JbSearch extends LitElement {
     _recents: { state: true },
     _error: { state: true },
     _toast: { state: true },
-    _held: { state: true },
+    _stack: { state: true },
+    _confirm: { state: true },
+    _sel: { state: true },
   };
   hass?: HomeAssistant;
   config!: JukeboxCardConfig;
@@ -81,9 +75,17 @@ export class JbSearch extends LitElement {
   private _recents: string[] = [];
   private _error = '';
   private _toast = '';
-  private _held = '';
   private _toastTimer?: number;
-  private _press?: { uri: string; x: number; y: number; timer: number; fired: boolean; item: MaItem; group: GroupKey; el: HTMLElement };
+  /** detail back stack shown over the results (artist -> album -> ...); empty = results */
+  private _stack: DetailEntry[] = [];
+  /** Replace queue / Start radio wait here for Cancel or Replace (guests use the kiosk: never clear the queue silently) */
+  private _confirm: ConfirmState | null = null;
+  /** a tapped track / station row is only highlighted; its row icons do the playing */
+  private _sel = '';
+  private _resScroll = 0;
+  private _kbBefore = false;
+  /** A row tap never plays: artists / albums / playlists (podcasts with mass_queue) open a detail, anything else is highlighted. */
+  private press = new PressController<{ it: MaItem; g: GroupKey }>(this, (p) => this.tap(p.it, p.g), (p) => this.tap(p.it, p.g));
   private _chipTimer?: number;
   private _chipFired = false;
   private _seqShown = 0;
@@ -146,7 +148,9 @@ export class JbSearch extends LitElement {
     q = q.slice(0, MAX_QUERY).replace(/^\s+/, '');
     if (q === this._query) return;
     this._query = q;
-    this._menu = null;
+    this._menu = null; this._confirm = null; this._sel = '';
+    // typing is a new search: leave any detail view (results update on every keystroke, no debounce)
+    if (this._stack.length) this.closeDetails(false);
     this.engine.query(q); // every keystroke, from 1 character, including backspace
   }
   private onKey = (e: CustomEvent<KeyDetail>) => {
@@ -164,8 +168,8 @@ export class JbSearch extends LitElement {
     if (path.some((n) => n instanceof HTMLElement && (n.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName)))) return;
     let handled = true;
     if (e.key === 'Backspace') this.setQuery(this._query.slice(0, -1));
-    else if (e.key === 'Escape') { if (this._menu) this._menu = null; else this.setQuery(''); }
-    else if (e.key === 'Enter') this.playTop();
+    else if (e.key === 'Escape') { if (this._confirm) this._confirm = null; else if (this._menu) this.closeMenu(); else if (this._stack.length) this.back(); else this.setQuery(''); }
+    else if (e.key === 'Enter') this.openTop();
     else if (e.key.length === 1 && /[\p{L}\p{N}\p{P}\p{S} ]/u.test(e.key)) this.setQuery(this._query + e.key.toUpperCase());
     else handled = false;
     if (handled) { e.preventDefault(); e.stopPropagation(); }
@@ -189,27 +193,24 @@ export class JbSearch extends LitElement {
 
   async play(it: MaItem, g: GroupKey, enqueue: Enqueue = 'play', radio = false) {
     if (!this.hass) return;
-    const entity_id = this.config.entity || 'media_player.everywhere';
-    const data: Record<string, any> = { media_id: it.uri, media_type: this.mediaType(it, g), enqueue };
-    if (radio && data.media_type !== 'radio') data.radio_mode = true;
-    this._menu = null;
+    this.closeMenu();
     this.addRecent(this._shownQuery || this._query);
-    const name = this.hass.states[entity_id]?.attributes?.friendly_name ?? 'Everywhere';
-    const msg = radio ? `Starting radio from ${it.name}` : enqueue === 'next' ? `${it.name} plays next`
-      : enqueue === 'add' ? `Added ${it.name} to the queue` : enqueue === 'replace' ? `Queue replaced with ${it.name}` : `Playing ${it.name} on ${name}`;
     try {
-      await this.hass.callService('music_assistant', 'play_media', data, { entity_id });
-      this.toast(msg);
-      this.dispatchEvent(new CustomEvent('jukebox-played', { detail: { item: it, data, entity_id }, bubbles: true, composed: true }));
+      const r = await playMedia(this.hass, this.config, it, this.mediaType(it, g), enqueue, radio);
+      if (!r) return;
+      this.toast(playMessage(this.hass, this.config, it, enqueue, radio));
+      fire(this, 'jukebox-played', { item: it, ...r });
     } catch (err) {
       this.toast(`Couldn't play ${it.name}`);
       console.warn('[jukebox-card] play_media failed', err);
     }
   }
-  private playTop() {
-    const r = this._results; if (!r) return;
-    for (const g of ['tracks', 'albums', 'artists', 'playlists', 'radio'] as GroupKey[]) {
-      const it = r[g]?.[0]; if (it) { this.play(it, g); return; }
+  /** Hardware Enter: act on the first result as a tap would (open it, or highlight it). Never plays by itself. */
+  private openTop() {
+    const r = this._results; if (!r || this._stack.length || this._menu || this._confirm) return;
+    for (const g of GROUPS) {
+      const it = r[g.key]?.[0];
+      if (it) { this.tap(it, g.key); return; }
     }
   }
   private toast(t: string) {
@@ -217,114 +218,93 @@ export class JbSearch extends LitElement {
     this._toastTimer = window.setTimeout(() => (this._toast = ''), 2400);
   }
 
-  // ---------- press handling (tap = play, long-press = menu) ----------
-  private onItemDown(e: PointerEvent, it: MaItem, g: GroupKey) {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if ((e.target as HTMLElement).closest('.mo')) return;
-    e.preventDefault(); // no focus, no text selection
-    const el = e.currentTarget as HTMLElement;
-    this.cancelPress();
-    const timer = window.setTimeout(() => {
-      if (!this._press) return;
-      this._press.fired = true;
-      this.openMenu(it, g, el);
-    }, LONG_PRESS_MS);
-    this._press = { uri: it.uri, x: e.clientX, y: e.clientY, timer, fired: false, item: it, group: g, el };
-    this._held = it.uri;
+  // ---------- taps, menus, detail stack ----------
+  private root() { return this.renderRoot.querySelector('.sx') as HTMLElement; }
+  private tap(it: MaItem, g: GroupKey) {
+    const type = this.mediaType(it, g);
+    if (drillable(type, this.config)) { this.openDetail(it, type); return; }
+    this._sel = this._sel === it.uri ? '' : it.uri;
   }
-  private onItemMove(e: PointerEvent) {
-    const p = this._press; if (!p || p.fired) return;
-    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > MOVE_CANCEL_PX) this.cancelPress();
+  /** Row icons. Add / Play next run at once; Replace queue and Start radio (enqueue replace) ask first. */
+  private rowAct(it: MaItem, g: GroupKey, a: RowAct | 'more', el: HTMLElement) {
+    const type = this.mediaType(it, g);
+    const ask = (k: RowAct) => {
+      this.closeMenu();
+      if (k === 'add' || k === 'next') { this.play(it, g, k); return; }
+      this._confirm = { kind: k, item: it, run: () => this.play(it, g, 'replace', k === 'radio') };
+    };
+    if (a === 'more') this.showMenu(it, g, el.closest('.row') as HTMLElement, foldedActions(canRadio(type, it), ask));
+    else ask(a);
   }
-  private onItemUp(e: PointerEvent) {
-    const p = this._press; if (!p) return;
-    window.clearTimeout(p.timer);
-    this._press = undefined;
-    if (!p.fired) { this._held = ''; this.play(p.item, p.group); }
-    e.preventDefault();
+  private showMenu(it: MaItem, g: GroupKey, anchor: HTMLElement | null, actions: MenuAction[]) {
+    this.press.held = it.uri;
+    this._menu = { item: it, group: g, pos: menuPos(this.root(), anchor, actions.length), actions };
+    fire(this, 'jukebox-menu', { item: it });
   }
-  private cancelPress() {
-    if (this._press) { window.clearTimeout(this._press.timer); if (!this._press.fired) this._held = ''; }
-    this._press = undefined;
+  private closeMenu() { this._menu = null; this.press.release(); }
+  /** Push a detail view over the results. On a phone the on-screen keyboard is tucked away while browsing it. */
+  openDetail(it: MaItem, type: string) {
+    this.closeMenu(); this._confirm = null;
+    if (!this._stack.length) {
+      this._resScroll = (this.renderRoot.querySelector('.res .scroll') as HTMLElement | null)?.scrollTop ?? 0;
+      this._kbBefore = this._kbHidden;
+      this._kbHidden = true;
+      this.addRecent(this._shownQuery || this._query);
+    }
+    this._stack = [...this._stack, { item: it, type }];
   }
-  private openMenu(it: MaItem, g: GroupKey, anchor: HTMLElement) {
-    const root = this.renderRoot.querySelector('.sx') as HTMLElement;
-    const rr = localRect(root);
-    const ar = localRect(anchor);
-    const sheet = rr.width <= 520;
-    const menuH = (['artists', 'albums', 'playlists'].includes(g) ? 5 : 4) * 46 + 46;
-    const below = ar.bottom - rr.top - 6;
-    const up = below + menuH > rr.height - 8;
-    const top = up ? Math.max(8, ar.top - rr.top - menuH + 6) : below;
-    const right = Math.max(8, rr.right - ar.right + 44);
-    this._held = it.uri;
-    this._menu = { item: it, group: g, sheet, top, right, up };
-    this.dispatchEvent(new CustomEvent('jukebox-menu', { detail: { item: it }, bubbles: true, composed: true }));
-  }
-  private openItem(it: MaItem, g: GroupKey) {
+  async back() {
     this.closeMenu();
-    this.dispatchEvent(new CustomEvent('jukebox-open', { detail: { item: it, type: this.mediaType(it, g) }, bubbles: true, composed: true }));
+    this._stack = this._stack.slice(0, -1);
+    if (!this._stack.length) await this.closeDetails(true);
   }
-  private closeMenu() { this._menu = null; this._held = ''; }
+  private async closeDetails(restore: boolean) {
+    this._stack = [];
+    this._kbHidden = this._kbBefore;
+    if (!restore) return;
+    await this.updateComplete;
+    const el = this.renderRoot.querySelector('.res .scroll') as HTMLElement | null;
+    if (el) el.scrollTop = this._resScroll;
+  }
+  private onNav(e: CustomEvent) {
+    e.stopPropagation();
+    if (e.detail.op === 'back') this.back(); else this.openDetail(e.detail.item, e.detail.type);
+  }
 
   // ---------- render ----------
-  private pressAttrs(it: MaItem, g: GroupKey) {
-    return {
-      down: (e: PointerEvent) => this.onItemDown(e, it, g),
-      move: (e: PointerEvent) => this.onItemMove(e),
-      up: (e: PointerEvent) => this.onItemUp(e),
-      cancel: () => this.cancelPress(),
-    };
-  }
-
-  private art(it: MaItem, cls: string) {
-    const src = imageOf(it);
-    return html`<span class="ar ${cls}" style="background:${ART[hash(it.name) % ART.length]}">${src
-      ? html`<img src=${src} alt="" loading="lazy" draggable="false" @error=${(e: Event) => ((e.target as HTMLElement).style.display = 'none')} />`
-      : nothing}</span>`;
-  }
-  private prov(it: MaItem) {
-    const p = it.media_type === 'radio' ? 'Radio' : providerLabel(it.uri, it.provider);
-    return p ? html`<span class="pv">${p}</span>` : nothing;
-  }
   private sub(it: MaItem, g: GroupKey) {
     if (g === 'tracks') return [artistNames(it), it.album?.name].filter(Boolean).join(' · ');
-    if (g === 'albums') return artistNames(it);
-    if (g === 'playlists') return it.owner ?? '';
-    if (g === 'radio') return it.metadata && (it.metadata as any).description ? (it.metadata as any).description : 'Live radio';
+    if (g === 'artists') return 'Artist';
+    if (g === 'albums') return ['Album', artistNames(it)].filter(Boolean).join(' · ');
+    if (g === 'playlists') return ['Playlist', it.owner].filter(Boolean).join(' · ');
+    if (g === 'radio') return it.metadata && (it.metadata as any).description ? (it.metadata as any).description : 'Radio station';
+    if (g === 'podcasts') return ['Podcast', (it as any).publisher ?? artistNames(it)].filter(Boolean).join(' · ');
+    if (g === 'audiobooks') return ['Audiobook', artistNames(it)].filter(Boolean).join(' · ');
     return artistNames(it);
   }
 
-  private tile(it: MaItem, g: GroupKey) {
-    const p = this.pressAttrs(it, g);
-    const circ = g === 'artists';
-    return html`<div class="${circ ? 'ac' : 'al'} ${this._held === it.uri ? 'held' : ''}" data-uri=${it.uri} data-group=${g}
-        @pointerdown=${p.down} @pointermove=${p.move} @pointerup=${p.up} @pointercancel=${p.cancel} @pointerleave=${p.cancel}
-        @contextmenu=${(e: Event) => e.preventDefault()}>
-      ${this.art(it, circ ? 'circ' : 'sq')}<b>${it.name}</b>${circ ? nothing : html`<small>${this.sub(it, g)}</small>`}${this.prov(it)}
-    </div>`;
-  }
+  /** One result row: art, title, subtitle (provider badge + artist / type), duration, and the row icons. */
   private row(it: MaItem, g: GroupKey) {
-    const p = this.pressAttrs(it, g);
-    return html`<div class="row ${this._held === it.uri ? 'held' : ''}" data-uri=${it.uri} data-group=${g}
+    const type = this.mediaType(it, g);
+    const drill = drillable(type, this.config);
+    const p = this.press.handlers(it.uri, { it, g });
+    return html`<div class="row ${drill ? 'drill' : ''} ${this.press.held === it.uri ? 'held' : ''} ${this._sel === it.uri ? 'sel' : ''}"
+        data-uri=${it.uri} data-group=${g} data-type=${type} aria-label=${drill ? `Open ${it.name}` : it.name}
         @pointerdown=${p.down} @pointermove=${p.move} @pointerup=${p.up} @pointercancel=${p.cancel} @pointerleave=${p.cancel}
         @contextmenu=${(e: Event) => e.preventDefault()}>
-      ${this.art(it, 'th')}
-      <div class="rt"><b>${it.name}${it.version ? html` <i class="ver">${it.version}</i>` : nothing}</b><small>${this.sub(it, g)}</small></div>
-      ${this.prov(it)}<span class="du">${fmtDur(it.duration)}</span>
-      <button class="mo" tabindex="-1" aria-label="More options for ${it.name}"
-        @pointerdown=${(e: PointerEvent) => e.preventDefault()}
-        @click=${(e: MouseEvent) => this.openMenu(it, g, (e.currentTarget as HTMLElement).closest('.row') as HTMLElement)}>${icon('more')}</button>
+      ${artTpl(it, g === 'artists' ? 'th circ' : 'th')}
+      <div class="rt"><b>${it.name}${it.version ? html` <i class="ver">${it.version}</i>` : nothing}</b>
+        <small>${provTpl(it.uri, it.provider, it.media_type)}${it.duration ? html`<span class="du2">${fmtDur(it.duration)}</span>` : nothing}<span class="st">${this.sub(it, g)}</span></small></div>
+      <span class="du">${fmtDur(it.duration)}</span>
+      ${rowActsTpl(it, canRadio(type, it), (a, el) => this.rowAct(it, g, a, el))}
     </div>`;
   }
 
   private group(g: (typeof GROUPS)[number], items: MaItem[], full: boolean): TemplateResult {
-    const tiles = g.key === 'artists' || g.key === 'albums';
     return html`<div class="grp ${g.key}">
       <h3>${g.label}<em>${items.length}</em>${!full ? html`<button class="sa" tabindex="-1"
         @pointerdown=${(e: PointerEvent) => e.preventDefault()} @click=${() => (this._filter = g.key)}>See all</button>` : nothing}</h3>
-      ${tiles ? html`<div class="hs ${full ? 'wrap' : ''}">${items.map((it) => this.tile(it, g.key))}</div>`
-        : html`<div class="list">${items.map((it) => this.row(it, g.key))}</div>`}
+      <div class="list">${items.map((it) => this.row(it, g.key))}</div>
     </div>`;
   }
 
@@ -339,31 +319,12 @@ export class JbSearch extends LitElement {
       const g = GROUPS.find((x) => x.key === this._filter)!;
       return this.group(g, r[g.key] ?? [], true);
     }
-    const present = GROUPS.filter((g) => r[g.key]?.length);
-    const main = present.filter((g) => !['playlists', 'radio'].includes(g.key));
-    const pair = present.filter((g) => ['playlists', 'radio'].includes(g.key));
-    return html`${main.map((g) => this.group(g, r[g.key]!, false))}
-      ${pair.length ? html`<div class="pair">${pair.map((g) => this.group(g, r[g.key]!, false))}</div>` : nothing}`;
+    return html`${GROUPS.filter((g) => r[g.key]?.length).map((g) => this.group(g, r[g.key]!, false))}`;
   }
 
   private renderMenu() {
     const m = this._menu; if (!m) return nothing;
-    const it = m.item, g = m.group;
-    const btn = (ic: string, label: string, act: () => void, id: string) =>
-      html`<button class="mi" data-action=${id} tabindex="-1" role="menuitem" @pointerdown=${(e: PointerEvent) => e.preventDefault()} @click=${act}>${icon(ic)}${label}</button>`;
-    const items = html`
-      ${m.sheet ? btn('play', 'Play now', () => this.play(it, g, 'play'), 'play') : nothing}
-      ${btn('qnext', 'Play next', () => this.play(it, g, 'next'), 'next')}
-      ${btn('qadd', 'Add to queue', () => this.play(it, g, 'add'), 'add')}
-      ${btn('swap', 'Replace queue', () => this.play(it, g, 'replace'), 'replace')}
-      ${g === 'radio' ? nothing : btn('radio', 'Start radio', () => this.play(it, g, 'play', true), 'radio')}
-      ${['artists', 'albums', 'playlists'].includes(g) ? btn('open', 'Open', () => this.openItem(it, g), 'open') : nothing}`;
-    return html`<div class="scrim ${m.sheet ? 'dim' : ''}" @pointerdown=${(e: PointerEvent) => { e.preventDefault(); this.closeMenu(); }}></div>
-      <div class="menu ${m.sheet ? 'sheet' : ''}" role="menu" aria-label="${it.name} options"
-        style=${m.sheet ? '' : `top:${m.top}px;right:${m.right}px`}>
-        <div class="mh">${m.sheet ? html`${this.art(it, 'th')}<span><b>${it.name}</b><small>${this.sub(it, g) || providerLabel(it.uri)}</small></span>` : html`Long-press · ${it.name}`}</div>
-        ${items}
-      </div>`;
+    return menuTpl(m.pos, { item: m.item, sub: this.sub(m.item, m.group) || providerLabel(m.item.uri) }, m.actions, () => this.closeMenu());
   }
 
   render() {
@@ -396,21 +357,24 @@ export class JbSearch extends LitElement {
               @click=${() => { if (!this._chipFired) this.setQuery(q.toUpperCase()); }}>${q}</button>`)}
         </div>` : html`<div class="recents"></div>`}
         <section class="res" aria-label="Search results" data-shown-query=${this._shownQuery} data-seq=${this._seqShown}>
-          ${present.length > 1 ? html`<div class="filters">
+          ${this._stack.length ? html`<jb-detail class="dv" .hass=${this.hass} .config=${this.config} .entry=${this._stack[this._stack.length - 1]}
+              .trail=${[`Search “${this._shownQuery || this._query}”`, ...this._stack.slice(0, -1).map((x) => x.item.name)]} @jb-nav=${this.onNav}></jb-detail>`
+          : html`${present.length > 1 ? html`<div class="filters">
             ${(['all', ...present.map((g) => g.key)] as Array<GroupKey | 'all'>).map((k) => html`<button class="fc ${this._filter === k ? 'on' : ''}" tabindex="-1"
               @pointerdown=${(e: PointerEvent) => e.preventDefault()} @click=${() => (this._filter = k)}>${k === 'all' ? 'All' : GROUPS.find((g) => g.key === k)!.label}</button>`)}
           </div>` : nothing}
-          <div class="scroll" @scroll=${() => this.cancelPress()}>${this.renderResults()}</div>
+          <div class="scroll" @scroll=${() => this.press.scrolled()}>${this.renderResults()}</div>`}
           ${this._toast ? html`<div class="toast" role="status">${this._toast}</div>` : nothing}
         </section>
         <jb-keyboard class="kbd" @jb-key=${this.onKey}></jb-keyboard>
         ${this._kbHidden ? html`<button class="kb-open" tabindex="-1" aria-label="Show keyboard"
           @pointerdown=${(e: PointerEvent) => e.preventDefault()} @click=${() => (this._kbHidden = false)}>${icon('keyboard')}<span>Keyboard</span></button>` : nothing}
         ${this.renderMenu()}
+        ${confirmTpl(this._confirm, () => (this._confirm = null))}
       </div>`;
   }
 
-  static styles = [tokens, base, css`
+  static styles = [tokens, base, mediaStyles, css`
     :host { display: block; height: 100%; min-height: 0; color: var(--_fg); font-family: var(--_font-body); }
     .sx {
       position: relative; z-index: 1; height: 100%; display: grid; gap: 12px; padding: 14px var(--_pad) 12px;
@@ -457,58 +421,15 @@ export class JbSearch extends LitElement {
       padding: 12px 14px 24px; border-radius: var(--_radius); background: var(--_surface); border: 1px solid var(--_surface-border);
       -webkit-backdrop-filter: var(--jb-panel-filter, blur(14px)); backdrop-filter: var(--jb-panel-filter, blur(14px)); touch-action: pan-y; }
     .scroll::-webkit-scrollbar { display: none; }
-    .empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; color: var(--_muted); font-size: 14px; padding: 24px; }
-    .empty b { color: var(--_fg); font-family: var(--_font-display); font-size: 18px; }
+    .dv { flex: 1; min-height: 0; }
     .grp { min-width: 0; }
     h3 { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 8px; }
     h3 em { font-style: normal; font-weight: 600; color: var(--_inactive); letter-spacing: 0; }
     h3 .sa { margin-left: auto; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--_inactive); padding: 4px 0 4px 12px; }
-    .hs { display: flex; gap: 14px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x pan-y; padding: 2px; }
-    .hs::-webkit-scrollbar { display: none; }
-    .hs.wrap { flex-wrap: wrap; overflow: visible; }
-    .ar { position: relative; display: block; flex: none; overflow: hidden; box-shadow: 0 0 0 1px #ffffff1a; }
-    .ar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-    .circ { width: 64px; height: 64px; border-radius: 50%; }
-    .sq { width: 100px; height: 100px; border-radius: 10px; }
-    .th { width: 44px; height: 44px; border-radius: 8px; }
-    .ac { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; flex: none; border-radius: 12px; padding: 4px 0; cursor: pointer; user-select: none; -webkit-user-select: none; }
-    .al { width: 100px; display: flex; flex-direction: column; gap: 3px; flex: none; border-radius: 12px; cursor: pointer; user-select: none; -webkit-user-select: none; }
-    .ac b, .al b { font-size: 13px; font-weight: 700; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .al small { font-size: 12px; color: var(--_muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .ac.held, .al.held { background: #ffffff1f; box-shadow: 0 0 0 1.5px #fff; }
-    .pv { display: inline-block; width: max-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      padding: 2px 7px; border-radius: 999px; color: var(--_prov-fg); border: 1px solid var(--_prov-border); background: var(--_prov-bg); white-space: nowrap; }
-    .list { position: relative; display: flex; flex-direction: column; }
-    .row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto 40px 40px; align-items: center; gap: 12px; min-height: 56px; padding: 0 4px; border-radius: 10px;
-      cursor: pointer; user-select: none; -webkit-user-select: none; }
-    .row + .row { border-top: 1px solid var(--_divider); }
-    .rt { min-width: 0; display: flex; flex-direction: column; }
-    .rt b { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .rt .ver { font-style: normal; font-weight: 500; color: var(--_muted); }
-    .rt small { font-size: 13px; color: var(--_muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .du { font-size: 13px; color: var(--_muted); text-align: right; font-variant-numeric: tabular-nums; }
-    .mo { width: 40px; height: 40px; display: grid; place-items: center; color: var(--_inactive); }
-    .row.held { background: #ffffff1f; box-shadow: inset 0 0 0 1.5px #fff; }
-    .pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
-    .pair .row { grid-template-columns: 44px minmax(0, 1fr) auto 40px; } .pair .du { display: none; }
-    @container res (min-width: 620px) { .pair { grid-template-columns: 1fr 1fr; } }
-    .toast { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 10px 16px; border-radius: 999px;
-      background: var(--_active); color: var(--_on-accent); font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 10px 30px #000a; z-index: 4; }
-    .scrim { position: absolute; inset: -200px; z-index: 6; }
-    .scrim.dim { background: #000000a0; }
-    .menu { position: absolute; z-index: 7; width: 220px; padding: 6px; border-radius: 14px; background: #0a0a0af5; border: 1px solid #ffffff33; box-shadow: 0 20px 50px #000c; }
-    .mh { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--_inactive); padding: 6px 10px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .mi { display: flex; align-items: center; gap: 12px; width: 100%; height: 46px; padding: 0 10px; border-radius: 9px; font-size: 15px; font-weight: 600; color: #fff; text-align: left; }
-    .mi:active { background: #ffffff1f; }
-    .mi .i { width: 22px; height: 22px; }
-    .menu.sheet { left: 0; right: 0; bottom: 0; width: auto; border-radius: 20px 20px 0 0; padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); }
-    .menu.sheet .mh { display: flex; align-items: center; gap: 12px; text-transform: none; letter-spacing: 0; padding: 6px 6px 12px; border-bottom: 1px solid var(--_divider); margin-bottom: 6px; }
-    .menu.sheet .mh span { display: flex; flex-direction: column; min-width: 0; }
-    .menu.sheet .mh b { color: #fff; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .menu.sheet .mh small { font-size: 13px; font-weight: 500; color: var(--_muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .menu.sheet .mi { height: 52px; font-size: 16px; }
     .kb-open { position: absolute; right: var(--_pad); bottom: 16px; z-index: 5; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 18px;
       border-radius: 999px; background: var(--_active); color: var(--_on-accent); font-weight: 700; box-shadow: 0 10px 30px #000a; }
+    /* while the floating Keyboard pill shows, lists (results and detail views) get room below their last row so nothing hides under it */
+    .sx.kb-hidden { --jb-fab-space: 72px; }
     /* landscape: query + recents + keyboard on the left, results on the right */
     @container np (orientation: landscape) and (min-width: 700px) {
       .sx { grid-template-columns: minmax(400px, 40%) minmax(0, 1fr); grid-template-rows: auto auto 1fr; column-gap: clamp(16px, 2.5cqw, 32px);
@@ -517,6 +438,7 @@ export class JbSearch extends LitElement {
       .kbd { align-self: end; --jb-kb-handle-display: none; }
       .sx.kb-hidden .kbd { display: block; }
       .kb-open { display: none; }
+      .sx.kb-hidden { --jb-fab-space: 0px; }
     }
     @container np (orientation: landscape) and (max-height: 520px) {
       .sx { --kh: 46px; --kgap: 6px; } .recents { display: none; }
@@ -529,11 +451,9 @@ export class JbSearch extends LitElement {
       .chip { height: 32px; font-size: 13px; padding: 0 12px; }
       .kbd { --jb-kb-handle-h: 22px; --jb-kb-handle-label: none; }
       .scroll { padding: 10px; gap: 12px; }
-      .circ { width: 54px; height: 54px; } .ac { width: 74px; } .sq { width: 84px; height: 84px; } .al { width: 84px; }
-      .row { grid-template-columns: 40px minmax(0, 1fr) auto 32px; gap: 9px; } .row .du { display: none; } .th { width: 40px; height: 40px; }
-      .pair .row { grid-template-columns: 40px minmax(0, 1fr) auto 32px; }
       .fc { height: 30px; padding: 0 11px; font-size: 12px; }
     }
+    .sx.kb-hidden .res .scroll { padding-bottom: calc(10px + var(--jb-fab-space, 0px)); scroll-padding-bottom: var(--jb-fab-space, 0px); }
   `];
 }
 if (!customElements.get('jb-search')) customElements.define('jb-search', JbSearch);

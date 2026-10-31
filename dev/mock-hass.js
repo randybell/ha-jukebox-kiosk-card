@@ -15,7 +15,11 @@
 // radio=1 (Radio Browser stations in search only; the library has none, as on the real server), radio=lib (stations in the library too),
 // default: no radio provider at all; mqpage=all|paged (mass_queue `page`: all = falsy page returns every track, page n = 50-track
 // page n, like mass_queue 0.10; paged = 0-based 50-track pages, page 0 included; ignore = page ignored, always everything),
-// idle=1 (nothing playing), empty=1 (empty library), noart=1 (player without entity_picture_local).
+// idle=1 (nothing playing), empty=1 (empty library), noart=1 (player without entity_picture_local),
+// pods=1 (a podcast + an audiobook in the catalog), mqslow=<text> (mass_queue calls whose uri or name contains <text> take 900 ms),
+// mqfail=<service> (that one mass_queue service throws, e.g. get_artist_tracks), mqlat=<ms> (mass_queue latency, default 30-60),
+// playlat=<ms> (play_media round trip, default 20).
+// music_assistant.search with `artist` / `album`: MA prefixes the query ("artist - name"); the mock keeps only items by that artist.
 
 const params = new URLSearchParams(location.search);
 export const mock = (window.__mock = {
@@ -33,6 +37,10 @@ const MQPAGE = params.get('mqpage') ?? 'all';
 const NOART = params.get('noart') === '1';
 const MQ_PAGE_SIZE = 50;
 const EMPTY = params.get('empty') === '1';
+const PODS = params.get('pods') === '1';
+const MQSLOW = (params.get('mqslow') ?? '').toLowerCase();
+const MQFAIL = params.get('mqfail') ?? '';
+const MQLAT = params.get('mqlat');
 const fixture = async (f) => (await fetch(new URL(`./fixtures/${f}`, import.meta.url))).json();
 // real mass_queue tracks (scrubbed): library://album/1448 (Hotel California, 9 tracks), library://playlist/158 (2 tracks)
 const realTracks = await fixture('mass-queue-tracks-sample.json').then((d) => Object.fromEntries(Object.values(d).map((v) => [v.uri, v.raw.result.response.tracks]))).catch(() => ({}));
@@ -86,6 +94,10 @@ const CATALOG = {
     artist('Miles Davis', 'library', true), artist('Moby', 'apple_music'), artist('Muse'), artist('Massive Attack', 'library', true), artist('Mumford & Sons', 'apple_music'),
     artist('Madonna'), artist('Metallica'), artist('Eagles', 'library', true), artist('Fleetwood Mac'), artist('Abba', 'apple_music'), artist('Adele'),
     artist('Bob Marley & The Wailers'), artist('Coldplay', 'apple_music'), artist('Daft Punk', 'library', true), artist('Norah Jones'), artist('Air'), artist('The Beatles', 'library', true),
+    // "chicago": the band (library + the same artist on Apple Music), plus look-alikes that must not show up as its albums
+    artist('Chicago', 'library', true), artist('Chicago Symphony Orchestra', 'apple_music'),
+    // the same band from Apple Music, without artwork (not registered in A: nested artists of library items keep the library uri)
+    { media_type: 'artist', uri: 'apple_music://artist/Chicago', name: 'Chicago', version: '', image: null, favorite: false, explicit: null, fanart_image: null, _added: 11 },
   ],
   albums: [
     album('Mock Turtle Soup', 'The Mock Ups', 'library', true), album('Mocking the Blues', 'Mockingbird Trio', 'apple_music'),
@@ -96,6 +108,9 @@ const CATALOG = {
     album('Discovery', 'Daft Punk'), album('Play', 'Moby'), album('The 2nd Law', 'Muse'), album('21', 'Adele'), album('Arrival', 'Abba', 'apple_music'),
     album('Exodus', 'Bob Marley & The Wailers'), album('Parachutes', 'Coldplay', 'apple_music'), album('Master of Puppets', 'Metallica'), album('Like a Prayer', 'Madonna'),
     album('Sigh No More', 'Mumford & Sons'), album('Tusk', 'Fleetwood Mac'),
+    album('Chicago Transit Authority', 'Chicago', 'library', true), album('Chicago X', 'Chicago'), album('Chicago 17', 'Chicago', 'apple_music'),
+    album('Chicago X', 'Chicago', 'apple_music'), // same album on another provider: shown once
+    album('Chicago (Original Broadway Cast)', 'Original Broadway Cast', 'apple_music'), album('Mahler: Symphony No. 5', 'Chicago Symphony Orchestra', 'apple_music'),
   ],
   tracks: [
     track('Mockingbird Lane', 'The Mock Ups', 'Mock Turtle Soup', 221), track('Mock Sunrise', 'Placeholder Band', 'Ipsum', 242, 'apple_music'),
@@ -113,14 +128,21 @@ const CATALOG = {
     track('Sexy Boy', 'Air', 'Moon Safari', 298), track('Mo Money Mo Problems', 'The Notorious B.I.G.', 'Life After Death', 257, 'apple_music'), track('Moondance', 'Van Morrison', 'Moondance', 274, 'apple_music'),
     track('Rolling in the Deep', 'Adele', '21', 228), track('Dancing Queen', 'Abba', 'Arrival', 231, 'apple_music'), track('Three Little Birds', 'Bob Marley & The Wailers', 'Exodus', 180),
     track('Yellow', 'Coldplay', 'Parachutes', 269, 'apple_music'), track('Like a Prayer', 'Madonna', 'Like a Prayer', 340), track('Little Lion Man', 'Mumford & Sons', 'Sigh No More', 245),
+    track('25 or 6 to 4', 'Chicago', 'Chicago Transit Authority', 290), track('Beginnings', 'Chicago', 'Chicago Transit Authority', 474), track('Questions 67 and 68', 'Chicago', 'Chicago Transit Authority', 303),
+    track('If You Leave Me Now', 'Chicago', 'Chicago X', 236, 'library', '', true), track('Another Rainy Day in New York City', 'Chicago', 'Chicago X', 180),
+    track("Hard to Say I'm Sorry", 'Chicago', 'Chicago 17', 302, 'apple_music'), track("You're the Inspiration", 'Chicago', 'Chicago 17', 228, 'apple_music'),
+    track('All That Jazz', 'Original Broadway Cast', 'Chicago (Original Broadway Cast)', 362, 'apple_music'), track('Chicago', 'Frank Sinatra', 'Sinatra Sings', 133, 'apple_music'),
   ],
   playlists: [
     playlist('Mock Rock Essentials', 'library', true), playlist('Mockingbird Jazz Club', 'apple_music'), playlist('Monday Morning Mix'),
     playlist('Motown Classics', 'apple_music'), playlist('Eagles'), playlist('Long Drive'), playlist('Mellow Moods', 'library', true), playlist('Dinner Party'), playlist('Garage Workout', 'apple_music'),
+    playlist('Chicago Blues Classics', 'apple_music'),
   ],
-  radio: RADIO ? STATIONS() : [],
-  podcasts: [],
-  audiobooks: [],
+  radio: RADIO ? [...STATIONS(), radio('\tWXRT Chicago 93.1 FM', undefined, 3)] : [],
+  podcasts: PODS ? [{ media_type: 'podcast', uri: 'library://podcast/31', name: 'The Mockcast', version: '', image: art('The Mockcast'), favorite: false, explicit: null, _added: 5 },
+    { media_type: 'podcast', uri: 'library://podcast/32', name: 'Chicago Stories', version: '', image: null, favorite: false, explicit: null, _added: 6 }] : [],
+  audiobooks: PODS ? [{ media_type: 'audiobook', uri: 'library://audiobook/7', name: 'The Mock Chronicles', version: '', image: art('Mock Chronicles'), favorite: false, explicit: null,
+    authors: ['A. N. Author'], _added: 4 }] : [],
 };
 // the real export's ids, so drill-down into "Hotel California" serves the real mass_queue response (9 tracks with durations)
 CATALOG.albums.find((x) => x.name === 'Hotel California').uri = 'library://album/1448';
@@ -133,14 +155,15 @@ const libView = (it) => (it.uri.startsWith('library://') ? it : { ...it, uri: li
   artists: it.artists?.map((a) => ({ ...a, uri: A[a.name] ? libUri(A[a.name]) : a.uri })) });
 const byUri = (uri) => allItems().find((i) => i.uri === uri || i._lib === uri);
 
-function search(name, limit, types) {
+function search(name, limit, types, by = '') {
   const q = name.trim().toLowerCase();
+  const byOk = (it) => !by || (it.artists ?? []).some((a) => a.name.toLowerCase() === by.toLowerCase()) || it.name.toLowerCase() === by.toLowerCase();
   // MA's Radio Browser search also matches tags/genre, so "radio" or "rock" finds stations without it in the name
   const hay = (it) => [it.name, ...(it.artists ?? []).map((a) => a.name), it.album?.name ?? '', it.media_type === 'radio' ? 'radio rock fm' : ''].join(' ').toLowerCase();
   const score = (it) => (it.name.trim().toLowerCase().startsWith(q) ? 0 : it.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(q)) ? 1 : 2);
   const want = new Set((types ?? Object.keys(TYPE2KEY)).map((t) => TYPE2KEY[t]));
   const out = {};
-  for (const key of KEYS) out[key] = want.has(key) ? CATALOG[key].filter((it) => hay(it).includes(q)).sort((a, b) => score(a) - score(b)).slice(0, limit).map(pub) : [];
+  for (const key of KEYS) out[key] = want.has(key) ? CATALOG[key].filter((it) => hay(it).includes(q) && byOk(it)).sort((a, b) => score(a) - score(b)).slice(0, limit).map(pub) : [];
   return out;
 }
 function library({ media_type, favorite, search: s, limit = 25, offset = 0, order_by = 'name' }) {
@@ -243,11 +266,12 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     const ms = delayFor(data.name ?? '');
     await sleep(ms);
     if (mock.fail) throw new Error('mock failure');
-    const response = realSample ? structuredClone(realSample) : search(data.name ?? '', data.limit ?? 5, data.media_type);
+    const response = realSample ? structuredClone(realSample) : search(data.name ?? '', data.limit ?? 5, data.media_type, data.artist ?? '');
     call.ms = Math.round(ms); call.replyAt = Math.round(performance.now());
     return { context: ctx, response };
   }
-  await sleep(30 + Math.random() * 30);
+  const slow = domain === 'mass_queue' && MQSLOW && String(data.uri ?? '').toLowerCase().includes(MQSLOW) || (domain === 'mass_queue' && MQSLOW && (byUri(data.uri)?.name ?? '').toLowerCase().includes(MQSLOW));
+  await sleep(slow ? 900 : domain === 'mass_queue' && MQLAT ? Number(MQLAT) : 30 + Math.random() * 30);
   if (domain === 'music_assistant' && service === 'get_library') {
     needResp();
     if (!data.config_entry_id) throw new Error('config_entry_id missing');
@@ -268,6 +292,10 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     const id = ids(target);
     if (id.length !== 1 || id[0] !== EVERY) throw new Error(`play_media: ${id.join(',')} is not a Music Assistant player (only ${EVERY})`);
     if (!['play', 'replace', 'next', 'replace_next', 'add', undefined].includes(data.enqueue)) throw new Error('invalid enqueue');
+    // HA's MA schema: media_type is optional, one of these (MA infers the type from a full uri when it is omitted)
+    if (!['artist', 'album', 'audiobook', 'folder', 'playlist', 'podcast', 'track', 'radio', undefined].includes(data.media_type)) throw new Error(`invalid media_type ${data.media_type}`);
+    if (data.radio_mode !== undefined && typeof data.radio_mode !== 'boolean') throw new Error('radio_mode must be a boolean');
+    await sleep(Number(params.get('playlat') ?? 20)); // a real MA takes a moment to answer play_media
     const uris = [data.media_id].flat();
     let add = uris.flatMap((u) => tracksFor(byUri(u) ?? (realSample ? null : null)));
     if (!add.length) add = [libTracks[h(uris[0]) % libTracks.length]];
@@ -318,9 +346,21 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
   }
   if (domain === 'mass_queue') {
     if (mock.failQueue) throw new Error('queue unavailable');
+    if (MQFAIL && service === MQFAIL) throw new Error(`mass_queue.${service}: provider unavailable`);
+    if (service === 'get_podcast_episodes') {
+      needResp();
+      if (!data.config_entry_id || !data.uri) throw new Error('config_entry_id and uri required');
+      const pod = byUri(data.uri);
+      if (!pod || pod.media_type !== 'podcast') throw new Error(`URI ${data.uri} returned no results!`);
+      const n = pod.name === 'The Mockcast' ? 6 : 3;
+      return { context: ctx, response: { episodes: Array.from({ length: n }, (_, i) => ({ media_title: `${pod.name} #${n - i}`, media_content_id: `library://podcast_episode/${h(pod.uri) % 900 + i}`,
+        duration: 1800 + i * 60, media_image: '', favorite: false, release_date: new Date(Date.UTC(2026, 9, 28 - i * 7)).toISOString() })) } };
+    }
     if (service.startsWith('get_') && service.endsWith('_tracks')) {
       needResp();
       if (!data.config_entry_id || !data.uri) throw new Error('config_entry_id and uri required');
+      // mass_queue looks the item up first (get_*_details): an unknown uri is an error, not an empty list
+      if (!byUri(data.uri) && !realTracks[data.uri]) throw new Error(`URI ${data.uri} returned no results!`);
       if (data.page !== undefined && (!Number.isInteger(data.page) || data.page < 0 || data.page > 1000)) throw new Error('page must be 0..1000');
       const it = byUri(data.uri);
       const pl = service === 'get_playlist_tracks';

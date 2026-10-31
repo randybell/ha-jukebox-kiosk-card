@@ -1,4 +1,4 @@
-# Jukebox Card (`ha-jukebox-kiosk-card`) 0.3.1
+# Jukebox Card (`ha-jukebox-kiosk-card`) 0.3.2
 
 This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox kiosk. It uses the Black Frame Mono look: black header and footer, the album art blurred behind the centre, white active buttons and light-white inactive ones.
 
@@ -96,7 +96,7 @@ Every call is recorded in `window.__calls`. `test/run.mjs` drives the card with 
 ### Manual
 
 1. Download `jukebox-card.js` and `jukebox-card-fonts.zip` from a release (or run `npm run build`) and put them in `/config/www/jukebox/` as `jukebox-card.js` and `fonts/`.
-2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.3.1`, type **JavaScript module**.
+2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.3.2`, type **JavaScript module**.
    - Change `?v=` on every update, or Fully Kiosk will keep the old file.
    - Fonts are found in `fonts/` next to the `.js` automatically.
 
@@ -232,10 +232,10 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
   - At start the card makes one `limit: 1` call per category and **hides the categories that are empty**, such as Radio, Podcasts and Audiobooks on the current system.
 - **Sort chip:** A–Z (`name`), then Recently added (`timestamp_added_desc`), then Recently played (`last_played_desc`). Radio sorts by Popular (`play_count_desc`; `get_library` has no popularity order, so this is your own play count), then A–Z.
 - **Layout.** Tile grid with provider badges; tracks show as rows. Pages are cached per category, favorite and sort, and load more on scroll.
-- **Tap** to play now with `play_media`. **Long-press** opens a menu: Open, Play next, Add to queue, Replace queue, Start radio (not shown for radio stations).
+- **Tap never plays.** Artists, albums, playlists (and podcasts with mass_queue) open the detail view described under Search, with the same rows, icons and confirmations. Other tiles open a small sheet (Play next, Add to queue, Replace queue…, Start radio…). **Long-press** opens a menu: Open, Play next, Add to queue, Replace queue, Start radio (not shown for radio stations); Replace and Start radio confirm first.
 - **Radio.** Browse > Radio lists `get_library {media_type: radio}`. If the library has no stations (Radio Browser stations you haven't saved), it falls back to `music_assistant.search {name: radio, media_type: [radio]}` and says so above the grid. Station names are trimmed (Radio Browser pads some with tabs), every station has a **Radio** badge, and a station with no logo or a dead logo gets a radio-tower image. A tap sends `play_media {media_id: radiobrowser://radio/…, media_type: radio, enqueue: play}` to `media_player.everywhere`, never with `radio_mode`.
 - **Drill-down.** The › button on artist, album and playlist tiles, or Open in the menu, opens a detail page:
-  - a back button, Play, Add to queue and Radio (`radio_mode: true`), and a track list (tap a track to play it)
+  - a back button, Play, Shuffle, Add to queue and Start radio (`radio_mode: true`, tracks / artists / albums only), and a track list with per-row icons (tapping a track only highlights it)
   - with `mass_queue_entry_id`, tracks come from `mass_queue.get_album_tracks` / `get_artist_tracks` / `get_playlist_tracks {config_entry_id: <mass_queue entry>, uri[, page]}` with `return_response`. Each row shows its duration, and the header shows the count and total time ("9 tracks · 43 min", with "+" while more pages may follow)
   - playlists are paged: the card asks for `page: 0` first, then `page: 1, 2, …` (0–1000) when you scroll to the end or tap **Load more tracks**. mass_queue 0.10 returns the whole playlist for page 0, so usually there is one call; paging stops on an empty page, a page shorter than the first, or a page that repeats tracks already shown
   - artists also get an Albums row from `music_assistant.search`
@@ -261,28 +261,33 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 - **Cache.** Up to 100 queries are kept for 5 minutes (LRU). Backspacing back to an earlier query shows its results instantly, without a new call.
 - **Slow Music Assistant.** If a reply takes more than `slow_ms` (800 ms), the card keeps one call in flight and queues only the latest query. Keystrokes in between are merged into that one.
 - **Results.** They are grouped as Artists, Albums, Tracks, Playlists, Radio, Audiobooks and Podcasts, with filter chips. **Empty groups and their chips are hidden**, so Radio (when no radio provider answers), Audiobooks and Podcasts don't show. Radio items get a **Radio** badge, a 'Live radio' subtitle, and no Start radio action. Each item has a provider badge taken from its URI scheme, because MA items have no provider field (`library://…` → LIBRARY, `apple_music://…` and `apple_music--XXXXXXXX://…` → APPLE MUSIC).
-- **Tap** plays now: `enqueue: play`.
-- **Long-press** (500 ms) or **⋮** opens a menu:
+- **Every result is a list row**: art (round for artists) or an icon, title, subtitle (provider badge, type, artist / album; on phones the track length joins the subtitle). Titles truncate with an ellipsis; rows are at least 56 px tall.
+- **Row icons** (48 px, 44 px on phones), each with an `aria-label`:
 
-  | Menu item | `play_media` data |
-  |---|---|
-  | Play next | `enqueue: next` |
-  | Add to queue | `enqueue: add` |
-  | Replace queue | `enqueue: replace` |
-  | Start radio | `enqueue: play, radio_mode: true` |
-  | Open (artist, album, playlist) | switches to Browse and opens the drill-down page |
+  | Icon | `play_media` data | Confirmation |
+  |---|---|---|
+  | Add to queue | `enqueue: add` | none |
+  | Play next | `enqueue: next` | none |
+  | Replace queue | `enqueue: replace` | "Replace the current queue? This clears what's playing for everyone." Cancel / Replace |
+  | Start radio (radio-tower icon) | `enqueue: replace, radio_mode: true` | "Start radio from “…”? This replaces the current queue for everyone." Cancel / Start radio |
 
-  The menu opens as a popover on tablets and as a bottom sheet with Play now on phones (≤520 px wide).
+  Start radio is shown only for tracks, artists and albums. It is hidden for radio stations, podcasts, episodes, audiobooks and playlists (playlist seeds are not confirmed to work in MA). Nothing is sent until you confirm; Cancel, Esc or tapping outside sends nothing. A second tap on an icon while its call is still on its way is dropped.
+  When a row is too narrow for four icons (under about 330 px, e.g. a 320 px phone), Replace and Start radio fold into a **⋯** menu (Replace queue…, Start radio…), which still confirm.
+- **Tapping a row never plays.** An artist, album, playlist (or podcast) opens its detail view in place; a track or station row is only highlighted. Long-press does the same.
+- **Detail views** (from Search, Browse or Enter on the top result): Back, Play, Shuffle, Add to queue and, where the seed is supported, Start radio. Play and Shuffle replace the queue, so they ask first; Add to queue does not. Tracks, an artist's albums and podcast episodes use the same rows and icons; an album row inside an artist opens that album.
+  - **Play** sends `play_media … enqueue: replace`; if the player is shuffling it first sends `media_player.shuffle_set {shuffle: false}` (awaited) so the list plays in order.
+  - **Shuffle** sends `media_player.shuffle_set {shuffle: true}` to the player, waits for it, then `play_media … enqueue: replace`. Music Assistant applies the queue's shuffle flag as it loads the new items, so the whole album / playlist / artist plays in random order using documented services only (no client-side reordering of URIs).
+  - Track lists come from mass_queue when `mass_queue_entry_id` is set. Without it, albums and artists fall back to a search, labelled "matched by search" with a note; playlists say that mass_queue is needed for their tracks (Play / Shuffle still work).
 - **Service call:** `music_assistant.play_media {media_id: <uri>, media_type, enqueue[, radio_mode]}` with target `{entity_id: <entity>}`.
-- **Recents.** After a play, the query is saved to localStorage (`jukebox-card:recents:v1`, up to 8). Tap a chip to search it again; hold a chip 0.7 s to remove it.
+- **Recents.** After a play or opening a detail view, the query is saved to localStorage (`jukebox-card:recents:v1`, up to 8). Tap a chip to search it again; hold a chip 0.7 s to remove it.
 - **Hardware keyboard:**
 
   | Key | Action |
   |---|---|
   | Letters, digits, punctuation | Type (shown uppercase) |
   | Backspace | Delete a character |
-  | Esc | Close the menu, otherwise clear the query |
-  | Enter | Play the top result |
+  | Esc | Close the confirmation or menu, then leave a detail view, otherwise clear the query |
+  | Enter | Open the top result's detail (or highlight a track); never plays |
 
   Ctrl, Alt and Meta shortcuts are ignored.
 - **On-screen keyboard:**
@@ -296,12 +301,26 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 
 **Radio, audiobooks and podcasts.** These groups (and their filter chips) are hidden whenever they come back empty. With Radio Browser in Music Assistant, stations appear in search results (`radiobrowser://radio/<uuid>`) and in Browse > Radio. Try it in the harness with `?radio=1` or `?radio=lib`.
 
+## Changelog
+
+### 0.3.2
+- Search results are now a list: every artist, album, track, playlist and station is a row with Add to queue, Play next, Replace queue and Start radio icons on the right.
+- Replace queue and Start radio ask first ("This clears what's playing for everyone"); Cancel sends nothing.
+- Tapping an artist, album or playlist no longer starts playing it: it opens a page with its tracks (and, for artists, albums).
+- Detail pages have Play, Shuffle, Add to queue and Start radio; Shuffle really plays the whole list in random order.
+- Start radio works from tracks, artists and albums; it is hidden for stations, podcasts, audiobooks and playlists.
+- Works on phones (390 px) up to 1920x1080; on very narrow screens the last two icons fold into a ⋯ menu.
+- Fixes: taps lost after a scroll, double plays from a double tap, rows hidden under the Keyboard button.
+
+### 0.3.1
+- Live API fixes: mass_queue track lists and paging, proxy-only player art, Radio Browser stations.
+
 ## Repository, releases and HACS
 
 - `hacs.json`: `{"name": "Jukebox Card", "filename": "jukebox-card.js", "render_readme": true}`. `filename` lets HACS find `jukebox-card.js` even though the repo is called `ha-jukebox-kiosk-card`.
 - `dist/` is **not committed**. `.github/workflows/release.yml` runs on a `v*` tag: `npm ci`, typecheck, build, then it attaches `dist/jukebox-card.js` and `jukebox-card-fonts.zip` to a GitHub release. HACS installs from the latest release's assets.
   - Why: committed build output makes every diff noisy, goes stale when someone forgets to rebuild, and is easy to mismatch with the source. A tag-built release always matches its tag, HACS lets users pick from the last 5 releases, and the repo stays small.
-  - To release: bump `version` in `package.json` and `VERSION` in `src/jukebox-card.ts`, commit, then `git tag v0.3.1 && git push --tags`.
+  - To release: bump `version` in `package.json` and `VERSION` in `src/jukebox-card.ts`, commit, then `git tag -a v0.3.2 -m 'Jukebox Card 0.3.2' && git push origin v0.3.2` (push only that tag).
 - `test/shots/` (generated by the tests and screenshot scripts) is git-ignored; the curated screenshots used in this README are in `docs/`.
 - License: MIT (`LICENSE`). The bundled fonts are OFL (licence files ship in `dist/fonts/` and the fonts zip).
 

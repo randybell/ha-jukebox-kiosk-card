@@ -83,7 +83,7 @@ export class JbQueue extends LitElement {
     return html`<div class="qx">
       <div class="head"><h2>Queue</h2><span class="cnt">${remaining ? `${remaining} up next` : ''}</span>
         ${s?.loading ? html`<span class="live busy"></span>` : nothing}</div>
-      <div class="scroll panel" @scroll=${() => this.press.cancel()}>
+      <div class="scroll panel" @scroll=${() => this.press.scrolled()}>
         ${s?.error ? html`<div class="empty"><b>Queue unavailable</b><span>${s.error}</span></div>`
           : !items.length ? html`<div class="empty"><b>${s?.loading || !s?.at ? 'Loading queue…' : 'The queue is empty'}</b><span>Add music from Search or Browse.</span></div>`
           : html`

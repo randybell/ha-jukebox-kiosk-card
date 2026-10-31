@@ -35,6 +35,10 @@ const P: Record<string, string> = {
   back: 'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z',
   open: 'M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z',
   sort: 'M3 18h6v-2H3v2zM3 6v2h18V6H3zm0 7h12v-2H3v2z',
+  /* mdi radio-tower: "Start radio" (MA radio mode), distinct from the radio-station icon */
+  tower: 'M12 10a2 2 0 0 1 2 2c0 .5-.18.94-.47 1.29L16.7 22h-2.13L12 14.93 9.43 22H7.3l3.17-8.71A2 2 0 0 1 10 12a2 2 0 0 1 2-2m0-2a4 4 0 0 0-4 4c0 .5.1 1 .28 1.46l-.88 2.4A6 6 0 0 1 6 12a6 6 0 0 1 6-6 6 6 0 0 1 6 6c0 1.47-.53 2.81-1.4 3.86l-.88-2.4c.18-.46.28-.96.28-1.46a4 4 0 0 0-4-4m0-4a8 8 0 0 0-8 8c0 2.36 1 4.5 2.64 5.94l-.72 2A10 10 0 0 1 2 12 10 10 0 0 1 12 2a10 10 0 0 1 10 10c0 3.23-1.54 6.11-3.92 7.94l-.72-2A8 8 0 0 0 20 12a8 8 0 0 0-8-8z',
+  /* mdi playlist-remove-ish "replace queue": list with a refresh arrow */
+  replace: 'M2 6h12v2H2zm0 4h12v2H2zm0 4h7v2H2zm16.5-3.5V8l-3.5 3.5 3.5 3.5v-2.5a3 3 0 1 1-3 3h-2a5 5 0 1 0 5-5z',
   eq: 'M4 20h3V10H4v10zm6 0h3V4h-3v16zm6 0h3v-7h-3v7z',
 };
 export const icon = (name: keyof typeof P | string, cls = 'i') =>
