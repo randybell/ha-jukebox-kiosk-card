@@ -1,0 +1,19 @@
+{
+  "id": 3,
+  "type": "result",
+  "success": true,
+  "result": {
+    "context": {
+      "id": "01MOCKC0NTEXT0000000000001",
+      "parent_id": null,
+      "user_id": null
+    },
+    "response": {
+      "items": [],
+      "limit": 3,
+      "offset": 0,
+      "order_by": "name",
+      "media_type": "radio"
+    }
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "id": 1,
+  "type": "result",
+  "success": true,
+  "result": {
+    "context": {
+      "id": "01MOCKC0NTEXT0000000000003",
+      "parent_id": null,
+      "user_id": null
+    },
+    "response": {
+      "artists": [
+        {
+          "media_type": "artist",
+          "uri": "library://artist/1231",
+          "name": "Eagles",
+          "version": "",
+          "image": "https://is1-ssl.mzstatic.com/image/thumb/Features211/v4/72/8c/3c/728c3c6d-1daa-a28b-b305-70ed95884142/mza_17804459914424444384.png/1000x1000bb.jpg",
+          "favorite": false,
+          "explicit": null,
+          "fanart_image": null
+        }
+      ],
+      "albums": [
+        {
+          "media_type": "album",
+          "uri": "library://album/1448",
+          "name": "Hotel California",
+          "version": "",
+          "image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+          "favorite": false,
+          "explicit": null,
+          "discart_image": null,
+          "artists": [
+            {
+              "media_type": "artist",
+              "uri": "library://artist/1231",
+              "name": "Eagles",
+              "version": "",
+              "image": null
+            }
+          ]
+        },
+        {
+          "media_type": "album",
+          "uri": "apple_music://album/635829435",
+          "name": "Their Greatest Hits 1971-1975",
+          "version": "",
+          "image": "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/f0/c7/c8/f0c7c8f4-4319-d357-ddaf-566ef8e2194e/081227979379.jpg/1000x1000bb.jpg",
+          "favorite": false,
+          "explicit": null,
+          "discart_image": null,
+          "artists": [
+            {
+              "media_type": "artist",
+              "uri": "apple_music--XXXXXXXX://artist/Eagles",
+              "name": "Eagles",
+              "version": "",
+              "image": null
+            }
+          ]
+        },
+        {
+          "media_type": "album",
+          "uri": "apple_music://album/636866317",
+          "name": "The Very Best of Eagles",
+          "version": "",
+          "image": "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/88/90/0d/88900ddb-b23e-c1e6-8147-20eb92340076/081227397128.jpg/1000x1000bb.jpg",
+          "favorite": false,
+          "explicit": null,
+          "discart_image": null,
+          "artists": [
+            {
+              "media_type": "artist",
+              "uri": "apple_music--XXXXXXXX://artist/Eagles",
+              "name": "Eagles",
+              "version": "",
+              "image": null
+            }
+          ]
+        }
+      ],
+      "tracks": [
+        {
+          "media_type": "track",
+          "uri": "library://track/7043",
+          "name": "Hotel California",
+          "version": "",
+          "image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+          "favorite": false,
+          "explicit": null,
+          "artists": [
+            {
+              "media_type": "artist",
+              "uri": "library://artist/1231",
+              "name": "Eagles",
+              "version": "",
+              "image": null
+            }
+          ],
+          "album": {
+            "media_type": "album",
+            "uri": "library://album/1448",
+            "name": "Hotel California",
+            "version": "",
+            "image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg"
+          }
+        },
+        {
+          "media_type": "track",
+          "uri": "apple_music://track/635791802",
+          "name": "Take It Easy",
+          "version": "",
+          "image": "https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/8f/e7/f4/8fe7f417-d464-8879-b00e-3d4965a9cfd1/075596062329.jpg/1000x1000bb.jpg",
+          "favorite": false,
+          "explicit": null,
+          "artists": [
+            {
+              "media_type": "artist",
+              "uri": "apple_music--XXXXXXXX://artist/Eagles",
+              "name": "Eagles",
+              "version": "",
+              "image": null
+            }
+          ],
+          "album": {
+            "media_type": "album",
+            "uri": "apple_music--XXXXXXXX://album/Eagles",
+            "name": "Eagles",
+            "version": "",
+            "image": null
+          }
+        },
+        {
+          "media_type": "track",
+          "uri": "library://track/7051",
+          "name": "The Last Resort",
+          "version": "",
+          "image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg",
+          "favorite": false,
+          "explicit": null,
+          "artists": [
+            {
+              "media_type": "artist",
+              "uri": "library://artist/1231",
+              "name": "Eagles",
+              "version": "",
+              "image": null
+            }
+          ],
+          "album": {
+            "media_type": "album",
+            "uri": "library://album/1448",
+            "name": "Hotel California",
+            "version": "",
+            "image": "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/88/16/2c/88162c3d-46db-8321-61f3-3a47404cfe76/075596050920.jpg/1000x1000bb.jpg"
+          }
+        }
+      ],
+      "playlists": [
+        {
+          "media_type": "playlist",
+          "uri": "library://playlist/158",
+          "name": "Eagles",
+          "version": "",
+          "image": "https://is1-ssl.mzstatic.com/image/thumb/Features211/v4/72/8c/3c/728c3c6d-1daa-a28b-b305-70ed95884142/mza_17804459914424444384.png/1000x1000AM.RSAB03.jpg",
+          "favorite": true,
+          "explicit": null
+        }
+      ],
+      "radio": [],
+      "audiobooks": [],
+      "podcasts": []
+    }
+  }
+}

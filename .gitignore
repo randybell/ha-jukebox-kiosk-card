@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# build output (published as GitHub release assets by .github/workflows/release.yml)
+dist/
+
+# generated test output (screenshots, results.json, perf.json); curated shots live in docs/
+test/shots/
+test/shots/*/r1*
+test/shots/*/r2*
+
+# dev caches and tooling
+.cache/
+.rollup.cache/
+.eslintcache
+*.tsbuildinfo
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local secrets (never commit HA tokens or URLs)
+.env
+.env.*

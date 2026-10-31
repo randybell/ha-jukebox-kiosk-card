@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>jukebox-card dev harness</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #log { position: fixed; right: 8px; bottom: 90px; z-index: 99; width: 420px; max-height: 40vh; overflow: auto; font: 11px/1.4 ui-monospace, monospace;
+      color: #9f9; background: #000c; border: 1px solid #333; padding: 6px; white-space: pre-wrap; display: none; }
+    body.log #log { display: block; }
+  </style>
+</head>
+<body>
+  <div id="log"></div>
+  <script type="module">
+    import { hass, onHass } from './mock-hass.js';
+    await import('../dist/jukebox-card.js');
+    const params = new URLSearchParams(location.search);
+    if (params.get('log') === '1') document.body.classList.add('log');
+    if (params.get('fresh') === '1') localStorage.removeItem('jukebox-card:recents:v1');
+    if (params.get('recents') === '1' && !localStorage.getItem('jukebox-card:recents:v1'))
+      localStorage.setItem('jukebox-card:recents:v1', JSON.stringify(['Miles Davis', 'Abbey Road', 'Jazz FM', 'Eagles', 'Fleetwood']));
+    const card = document.createElement('jukebox-card');
+    card.setConfig({
+      type: 'custom:jukebox-card',
+      entity: 'media_player.everywhere',
+      config_entry_id: '01MUSICASSISTANT0000000000',
+      rooms: [
+        { name: 'Living Room', entity: 'media_player.living_room' },
+        { name: 'Kitchen', entity: 'media_player.kitchen' },
+        { name: 'Garage', entity: 'media_player.garage' },
+      ],
+      favorite_entity: 'button.everywhere_favorite_current_song',
+      ...(params.get('noqueue') === '1' ? {} : { queue_config_entry_id: '01MASSQUEUE0000000000000000' }),
+      screensaver_minutes: Number(params.get('saver') ?? 10),
+      accent: 'mono',
+      limit: 8,
+      default_tab: params.get('tab') || 'now',
+      ...(params.get('backdrop') ? { backdrop: params.get('backdrop') } : {}),
+      font_base: '../dist/fonts',
+    });
+    card.hass = hass;
+    document.body.appendChild(card);
+    window.__card = card;
+    window.__renders = [];
+    const log = document.getElementById('log');
+    card.addEventListener('jukebox-search-results', (e) => {
+      window.__renders.push({ t: Math.round(performance.now()), ...e.detail });
+      log.textContent += `render seq=${e.detail.seq} q="${e.detail.query}" n=${e.detail.count}${e.detail.cached ? ' (cache)' : ''}\n`;
+      log.scrollTop = 1e9;
+    });
+    onHass((h) => { card.hass = h; const c = window.__calls.at(-1); if (c) log.textContent += `call ${c.domain}.${c.service} ${JSON.stringify(c.data)}${c.target ? ' ' + JSON.stringify(c.target) : ''}\n`; });
+    window.__ready = true;
+  </script>
+</body>
+</html>

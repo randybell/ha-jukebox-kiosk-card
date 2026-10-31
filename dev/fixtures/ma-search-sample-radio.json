@@ -1,0 +1,21 @@
+{
+  "id": 2,
+  "type": "result",
+  "success": true,
+  "result": {
+    "context": {
+      "id": "01MOCKC0NTEXT0000000000002",
+      "parent_id": null,
+      "user_id": null
+    },
+    "response": {
+      "artists": [],
+      "albums": [],
+      "tracks": [],
+      "playlists": [],
+      "radio": [],
+      "audiobooks": [],
+      "podcasts": []
+    }
+  }
+}
