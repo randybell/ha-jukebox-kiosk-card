@@ -334,6 +334,8 @@ The bundled fonts (Inter and Plus Jakarta Sans) are not under that MIT license. 
 
 ### Credits
 
+Created and maintained by Randy Bell. Designed, built and tested with help from Grok Bot AI assistants. Thanks to the Music Assistant project and to other community projects whose ideas informed this card.
+
 This card is a front end; the real work is done by these projects:
 
 - **[mass_queue](https://github.com/droans/mass_queue)** (Music Assistant Queue Actions) by [droans](https://github.com/droans), MIT: the queue, the album, artist and playlist track lists, and the lyrics lookups all go through its actions.
