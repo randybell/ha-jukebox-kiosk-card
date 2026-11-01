@@ -18,7 +18,7 @@ import { canGroup, canJumpQueue, targetsOf, targetMa, isActive, validPreset, val
 import { resolveBackdrop, drawPreblurred, BACKDROPS, prefersReducedMotion, type BackdropMode } from './backdrop';
 import type { HomeAssistant, JukeboxCardConfig, TabId } from './types';
 
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 const TABS: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'now', label: 'Now Playing', icon: 'disc' },
   { id: 'browse', label: 'Browse', icon: 'browse' },

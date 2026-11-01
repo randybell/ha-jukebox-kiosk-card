@@ -2,7 +2,9 @@
 
 All notable changes to Jukebox Card. Versions follow [semver](https://semver.org/).
 
-## Unreleased
+## 0.5.1 — 2026-10-31
+
+Docs and repo housekeeping for HACS: MIT license file, HACS validation workflow, README restructure, developer docs. No card changes.
 
 Docs, license and workflow housekeeping for HACS default-store inclusion. No card change and no version bump.
 
