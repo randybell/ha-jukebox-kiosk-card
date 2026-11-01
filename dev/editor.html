@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>jukebox-card editor harness (stub ha-form)</title>
+  <style>
+    html, body { margin: 0; background: #111; color: #eee; font: 14px/1.4 system-ui, sans-serif; }
+    .wrap { max-width: 560px; margin: 0 auto; padding: 16px; }
+    .note { font-size: 12px; color: #999; margin-bottom: 12px; }
+    pre { background: #000; padding: 8px; font-size: 11px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="note">Dev harness: &lt;ha-form&gt; here is a small STUB that renders the editor schema (expandable sections, select with custom value,
+      booleans, numbers, text). Home Assistant's real ha-form looks different.</div>
+    <div id="host"></div>
+    <pre id="out"></pre>
+  </div>
+  <script type="module">
+    // ---- stub ha-form: just enough of HA's schema handling to render and edit the card editor ----
+    class StubHaForm extends HTMLElement {
+      set schema(v) { this._schema = v; this.draw(); } get schema() { return this._schema; }
+      set data(v) { this._data = v; this.draw(); } get data() { return this._data; }
+      set computeLabel(f) { this._label = f; this.draw(); }
+      set hass(_) {}
+      emit(name, value) {
+        const v = { ...this._data, [name]: value };
+        this.dispatchEvent(new CustomEvent('value-changed', { detail: { value: v } }));
+      }
+      field(s) {
+        const label = this._label ? this._label(s) : s.name;
+        const v = this._data?.[s.name];
+        const row = document.createElement('label'); row.className = 'f'; row.dataset.name = s.name;
+        const t = document.createElement('span'); t.textContent = label; row.append(t);
+        const sel = s.selector ?? {};
+        let input;
+        if (sel.boolean) { input = Object.assign(document.createElement('input'), { type: 'checkbox', checked: !!v }); input.onchange = () => this.emit(s.name, input.checked); row.classList.add('bool'); }
+        else if (sel.select) {
+          const selEl = input = document.createElement('select');
+          for (const o of sel.select.options) { const opt = typeof o === 'string' ? { value: o, label: o } : o; input.append(Object.assign(document.createElement('option'), { value: opt.value, textContent: opt.label })); }
+          if (sel.select.custom_value) input.append(Object.assign(document.createElement('option'), { value: '__custom', textContent: 'Custom…' }));
+          input.value = v ?? '';
+          selEl.onchange = () => { if (selEl.value !== '__custom') this.emit(s.name, selEl.value); };
+          if (sel.select.custom_value) { const c = Object.assign(document.createElement('input'), { type: 'text', placeholder: 'custom', className: 'custom' }); c.onchange = () => this.emit(s.name, c.value); row.append(input, c); input = null; }
+        } else if (sel.number) { input = Object.assign(document.createElement('input'), { type: 'number', value: v ?? '' }); input.onchange = () => this.emit(s.name, input.value === '' ? undefined : Number(input.value)); }
+        else { input = Object.assign(document.createElement('input'), { type: 'text', value: Array.isArray(v) ? v.join(', ') : v ?? '' }); input.onchange = () => this.emit(s.name, sel.entity?.multiple ? input.value.split(/\s*,\s*/).filter(Boolean) : input.value); }
+        if (input) row.append(input);
+        return row;
+      }
+      draw() {
+        if (!this._schema || !this._data) return;
+        this.replaceChildren();
+        const st = document.createElement('style');
+        st.textContent = `.f{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid #2a2a2a}
+          .f span{flex:1} input,select{background:#222;color:#eee;border:1px solid #444;border-radius:6px;padding:6px;font:inherit;max-width:240px}
+          details{border:1px solid #333;border-radius:10px;padding:4px 12px;margin:10px 0;background:#181818} summary{font-weight:700;padding:8px 0;cursor:pointer}
+          .custom{width:70px;margin-left:6px}`;
+        this.append(st);
+        for (const s of this._schema) {
+          if (s.type === 'expandable') {
+            const d = document.createElement('details'); d.open = true; d.dataset.section = s.name;
+            d.append(Object.assign(document.createElement('summary'), { textContent: s.title }));
+            for (const c of s.schema) d.append(this.field(c));
+            this.append(d);
+          } else this.append(this.field(s));
+        }
+      }
+    }
+    customElements.define('ha-form', StubHaForm);
+    await import('../dist/jukebox-card.js');
+    const params = new URLSearchParams(location.search);
+    const cfg = params.get('cfg') ? JSON.parse(params.get('cfg')) : { type: 'custom:jukebox-card', entity: 'media_player.everywhere', config_entry_id: '01MUSICASSISTANT0000000000', mass_queue_entry_id: '01MASSQUEUE0000000000000000' };
+    const ed = document.createElement('jukebox-card-editor');
+    ed.setConfig(cfg);
+    window.__changes = [];
+    ed.addEventListener('config-changed', (e) => { window.__changes.push(e.detail.config); document.getElementById('out').textContent = JSON.stringify(e.detail.config, null, 1); });
+    document.getElementById('host').append(ed);
+    window.__editor = ed;
+    await ed.updateComplete;
+    window.__ready = true;
+  </script>
+</body>
+</html>

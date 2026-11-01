@@ -23,3 +23,4 @@ Thumbs.db
 # local secrets (never commit HA tokens or URLs)
 .env
 .env.*
+test/tmp/

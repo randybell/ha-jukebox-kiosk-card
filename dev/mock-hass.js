@@ -19,6 +19,10 @@
 // pods=1 (a podcast + an audiobook in the catalog), mqslow=<text> (mass_queue calls whose uri or name contains <text> take 900 ms),
 // mqfail=<service> (that one mass_queue service throws, e.g. get_artist_tracks), mqlat=<ms> (mass_queue latency, default 30-60),
 // playlat=<ms> (play_media round trip, default 20).
+// Lyrics (mass_queue.send_command, response {context, response:{response:X}} like the real REST/websocket shape):
+// lyrlat=<ms> (send_command latency, default 40), lyrfail=perm|err (every send_command throws), lyrics=none (nothing has lyrics).
+// The mock lyrics are INVENTED placeholder text (see dev/fixtures/ma-lyrics-sample.json), never real song lyrics.
+// 'So What' = synced via metadata/get_track_lyrics, 'Teardrop' = synced in item metadata, 'Dreams' = plain, the rest = none.
 // music_assistant.search with `artist` / `album`: MA prefixes the query ("artist - name"); the mock keeps only items by that artist.
 
 const params = new URLSearchParams(location.search);
@@ -30,6 +34,7 @@ export const mock = (window.__mock = {
   failQueue: params.get('qfail') === '1',
 });
 window.__calls = [];
+window.__lyricsLog = [];
 const REAL = params.get('real') === '1';
 const RADIO = params.get('radio') === '1' || params.get('radio') === 'lib';
 const RADIO_LIB = params.get('radio') === 'lib';
@@ -41,6 +46,9 @@ const PODS = params.get('pods') === '1';
 const MQSLOW = (params.get('mqslow') ?? '').toLowerCase();
 const MQFAIL = params.get('mqfail') ?? '';
 const MQLAT = params.get('mqlat');
+const LYRLAT = Number(params.get('lyrlat') ?? 40);
+const LYRFAIL = params.get('lyrfail') ?? '';
+const LYRNONE = params.get('lyrics') === 'none';
 const fixture = async (f) => (await fetch(new URL(`./fixtures/${f}`, import.meta.url))).json();
 // real mass_queue tracks (scrubbed): library://album/1448 (Hotel California, 9 tracks), library://playlist/158 (2 tracks)
 const realTracks = await fixture('mass-queue-tracks-sample.json').then((d) => Object.fromEntries(Object.values(d).map((v) => [v.uri, v.raw.result.response.tracks]))).catch(() => ({}));
@@ -257,8 +265,10 @@ const tracksFor = (it) => {
 
 async function callService(domain, service, data = {}, target, notifyOnError, returnResponse) {
   const call = { t: Math.round(performance.now()), domain, service, data: structuredClone(data), target: target ? structuredClone(target) : undefined, returnResponse: !!returnResponse };
-  window.__calls.push(call);
-  const ctx = { id: 'mock-' + window.__calls.length };
+  // read-only lyrics fetches go to their own log so the user-action log (__calls) stays exactly as before 0.4.0
+  const lyr = domain === 'mass_queue' && service === 'send_command';
+  (lyr ? window.__lyricsLog : window.__calls).push(call);
+  const ctx = { id: 'mock-' + (window.__calls.length + window.__lyricsLog.length) };
   const needResp = () => { if (!returnResponse) throw new Error(`${domain}.${service} needs return_response`); };
   if (domain === 'music_assistant' && service === 'search') {
     needResp();
@@ -269,6 +279,14 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     const response = realSample ? structuredClone(realSample) : search(data.name ?? '', data.limit ?? 5, data.media_type, data.artist ?? '');
     call.ms = Math.round(ms); call.replyAt = Math.round(performance.now());
     return { context: ctx, response };
+  }
+  if (domain === 'mass_queue' && service === 'send_command') {
+    needResp();
+    await sleep(LYRLAT);
+    if (LYRFAIL === 'perm') throw Object.assign(new Error('Unauthorized'), { code: 'unauthorized' });
+    if (LYRFAIL === 'err') throw new Error('mass_queue.send_command: provider unavailable');
+    if (data.config_entry_id !== MQ_ENTRY) throw new Error(`Config entry ${data.config_entry_id} not found`);
+    return { context: ctx, response: { response: sendCommand(data.command, data.data ?? {}) } };
   }
   const slow = domain === 'mass_queue' && MQSLOW && String(data.uri ?? '').toLowerCase().includes(MQSLOW) || (domain === 'mass_queue' && MQSLOW && (byUri(data.uri)?.name ?? '').toLowerCase().includes(MQSLOW));
   await sleep(slow ? 900 : domain === 'mass_queue' && MQLAT ? Number(MQLAT) : 30 + Math.random() * 30);
@@ -397,6 +415,68 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
   }
   throw new Error(`mock-hass: unhandled ${domain}.${service}`);
 }
+
+// ---------------- lyrics (invented text only) ----------------
+const MQ_ENTRY = '01MASSQUEUE0000000000000000';
+const LYR = await fixture('ma-lyrics-sample.json').catch(() => ({ lines: ['La la la'] }));
+const stamp = (t) => `[${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}]`;
+/** invented synced lyrics spanning `dur` seconds: a line every `step` s from `start`, a blank break every 8th line */
+function fakeLrc(dur, start = 6, step = 9) {
+  const out = ['[ar:Placeholder]', '[ti:Placeholder]'];
+  for (let t = start, i = 0; t < dur - 4; t += step, i++) out.push(`${stamp(t)}${i % 8 === 7 ? '' : LYR.lines[i % LYR.lines.length]}`);
+  return out.join('\n');
+}
+const fakePlain = () => LYR.lines.slice(0, 12).join('\n') + '\n\n' + LYR.lines.slice(12).join('\n');
+const LYRICS_TABLE = {
+  'So What': { via: 'gtl', lrc: () => fakeLrc(562) },
+  'Teardrop': { via: 'meta', lrc: () => fakeLrc(330, 4, 7) },
+  'Dreams': { via: 'meta', plain: fakePlain },
+};
+window.__lyricsCalls = () => window.__lyricsLog;
+/** sanitized MA item_by_uri shape: placeholder ids, provider apple_music--XXXXXXXX */
+function maItem(t) {
+  const lyr = LYRNONE ? undefined : LYRICS_TABLE[t.name];
+  return { item_id: String(h(t.uri) % 100000), provider: 'library', name: t.name, version: t.version ?? '', duration: t._duration ?? 0, media_type: 'track', uri: t.uri,
+    artists: (t.artists ?? []).map((a) => ({ ...a, item_id: String(h(a.name) % 9000), provider: 'library' })), album: t.album ?? null, favorite: !!t.favorite,
+    provider_mappings: [{ item_id: 'XXXXXXXX', provider_domain: 'apple_music', provider_instance: 'apple_music--XXXXXXXX', available: true }],
+    metadata: { lyrics: lyr?.via === 'meta' && lyr.plain ? lyr.plain() : null, lrc_lyrics: lyr?.via === 'meta' && lyr.lrc ? lyr.lrc() : null, images: null } };
+}
+function sendCommand(command, d) {
+  switch (command) {
+    case 'music/item_by_uri': {
+      const t = byUri(d.uri) ?? [...libTracks, ...LONG_DRIVE].find((x) => x.uri === d.uri);
+      if (!t) throw new Error(`MediaNotFoundError: ${d.uri}`);
+      return maItem(t);
+    }
+    case 'metadata/get_track_lyrics': {
+      if (!d.track || typeof d.track !== 'object') throw new Error('track required');
+      const lyr = LYRNONE ? undefined : LYRICS_TABLE[d.track.name];
+      if (!lyr) return [null, null];
+      return [lyr.plain ? lyr.plain() : null, lyr.lrc ? lyr.lrc() : null];
+    }
+    case 'music/search': {
+      const q = String(d.search_query ?? '').toLowerCase();
+      const words = q.split(/\s+-\s+|\s+/).filter(Boolean);
+      const tracks = libTracks.filter((t) => { const hay = `${t.name} ${(t.artists ?? []).map((a) => a.name).join(' ')}`.toLowerCase(); return words.every((w) => hay.includes(w)); })
+        .slice(0, d.limit ?? 8).map(maItem);
+      return { artists: [], albums: [], tracks, playlists: [], radio: [], audiobooks: [], podcasts: [] };
+    }
+    default: throw new Error(`mock-hass: unhandled send_command ${command}`);
+  }
+}
+/** test hook: pretend a radio station (or anything else) is now playing artist/title */
+window.__setNowPlaying = ({ artist = '', title = '', radio = true, uri, duration = null, position = 0 } = {}) => {
+  setState(EVERY, 'playing', { media_title: title, media_artist: artist, media_album_name: radio ? 'Mock Radio FM' : '', media_content_id: uri ?? (radio ? 'library://radio/7' : undefined),
+    media_content_type: radio ? 'radio' : 'music', media_duration: duration, media_position: position, media_position_updated_at: new Date().toISOString() });
+  commit();
+};
+
+/** test hook: play a catalog track by name (non-radio, real uri/duration) */
+window.__playTrack = (name, position = 60) => {
+  const t = libTracks.find((x) => x.name === name);
+  if (!t) throw new Error('no track ' + name);
+  window.__setNowPlaying({ artist: (t.artists ?? []).map((a) => a.name).join(', '), title: t.name, radio: false, uri: t.uri, duration: t._duration ?? 0, position });
+};
 
 function makeHass() {
   return { states: { ...states }, user: { name: 'Kiosk', is_admin: false }, locale: { language: 'en-US' }, language: 'en-US', callService };

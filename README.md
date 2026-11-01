@@ -1,4 +1,4 @@
-# Jukebox Card (`ha-jukebox-kiosk-card`) 0.3.2
+# Jukebox Card (`ha-jukebox-kiosk-card`) 0.4.0
 
 This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox kiosk. It uses the Black Frame Mono look: black header and footer, the album art blurred behind the centre, white active buttons and light-white inactive ones.
 
@@ -15,7 +15,8 @@ This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox ki
 | ![Radio](docs/browse-radio-1280x800.png) | ![Album](docs/browse-album-1280x800.png) |
 
 **What it has:**
-- all four tabs: **Now Playing**, **Browse**, **Search** and **Queue**
+- all five tabs: **Now Playing**, **Browse**, **Search**, **Queue** and **Lyrics**
+- lyrics from Music Assistant (synced or plain) on the art, a full-screen Stage, the Lyrics tab and the screensaver (see [Lyrics](#lyrics))
 - the screensaver
 - the card shell (header, rooms pill, clock, tab bar with a queue badge)
 - backdrop performance modes for slow kiosk tablets (see [Backdrop and performance](#backdrop-and-performance))
@@ -42,9 +43,10 @@ npm run typecheck     # tsc --noEmit
 ```bash
 python3 -m http.server 8765 --bind 127.0.0.1     # from the project root; the harness won't run from file://
 # open http://127.0.0.1:8765/dev/index.html?log=1
-npm test                                           # 95 end-to-end checks (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
+npm test                                           # run.mjs (156 end-to-end checks) + lyrics unit tests (51) + lyrics end-to-end checks (75) (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
 node test/shots-m2.mjs f1                          # every tab at 1920x1080, 1280x800, 820x1180 and 390x844 -> test/shots/m2/
 JB_SIZES=1920x1080 node test/shots-m2.mjs x1 '&backdrop=light'   # one size, one mode
+node test/shots-v040.mjs                           # lyrics surfaces, states and the editor at 1280x800, 1920x1080, 390x844 -> test/shots/v040/
 node test/perf.mjs 3                               # frame-time benchmark, see "Backdrop and performance"
 ```
 
@@ -80,10 +82,16 @@ URL parameters:
 | `recents=1` | seeds the recent-search chips |
 | `fresh=1` | clears localStorage |
 | `log=1` | shows a panel with every `callService` call |
-| `tab=now\|browse\|search\|queue` | opens that tab (default `now`) |
+| `tab=now\|browse\|search\|queue\|lyrics` | opens that tab (default `now`) |
+| `lyrics=none` | every lyrics lookup finds nothing |
+| `lyrfail=perm\|err` | lyrics lookups fail with a permission error / a generic error |
+| `lyrlat=ms` | lyrics reply latency (the live first lookup takes 8–33 s) |
+| `overlay=1\|0` | preset the art lyrics overlay toggle |
+| `keeplyrics=1` | with `fresh=1`, keep the lyrics cache |
+| `cfg=<json>` | merged into the card config |
 | `backdrop=auto\|full\|light\|static\|off` | sets the `backdrop` option |
 
-Every call is recorded in `window.__calls`. `test/run.mjs` drives the card with real CDP mouse, touch and keyboard input and writes `test/shots/results.json`. The browser tests are hermetic (`test/intercept.mjs`): `/api/media_player_proxy/…` and https images are answered with a generated SVG, and any request to a plain-http host other than the dev server fails (test 16o checks that the card never asks the MA host directly).
+Every call is recorded in `window.__calls`, except read-only lyrics lookups (`mass_queue.send_command`), which go to `window.__lyricsLog`. `window.__setNowPlaying({artist, title, radio, uri, duration, position})` and `window.__playTrack(name, position)` change what is playing. `test/run.mjs` drives the card with real CDP mouse, touch and keyboard input and writes `test/shots/results.json`. The browser tests are hermetic (`test/intercept.mjs`): `/api/media_player_proxy/…` and https images are answered with a generated SVG, and any request to a plain-http host other than the dev server fails (test 16o checks that the card never asks the MA host directly).
 
 ## Install on Home Assistant (nothing here touches your server)
 
@@ -96,7 +104,7 @@ Every call is recorded in `window.__calls`. `test/run.mjs` drives the card with 
 ### Manual
 
 1. Download `jukebox-card.js` and `jukebox-card-fonts.zip` from a release (or run `npm run build`) and put them in `/config/www/jukebox/` as `jukebox-card.js` and `fonts/`.
-2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.3.2`, type **JavaScript module**.
+2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.4.0`, type **JavaScript module**.
    - Change `?v=` on every update, or Fully Kiosk will keep the old file.
    - Fonts are found in `fonts/` next to the `.js` automatically.
 
@@ -120,7 +128,8 @@ views:
           - { name: Kitchen,     entity: media_player.kitchen }
           - { name: Garage,      entity: media_player.garage }
         screensaver_minutes: 10
-        default_tab: now
+        default_tab: now                               # now | browse | search | queue | lyrics
+        show_lyrics: true                              # needs mass_queue_entry_id
         backdrop: auto                                 # full | light | static | off | auto
 ```
 
@@ -132,12 +141,12 @@ views:
 | `config_entry_id` | (required) | MA config entry for `music_assistant.search` / `get_library` |
 | `rooms` | `[]` | `[{name, entity, icon?}]`, or bare entity ids (the name then comes from `friendly_name`). Each room gets its own volume slider |
 | `favorite_entity` | `button.everywhere_favorite_current_song` | Pressed by the heart (button, input_button or script). `''` hides the heart |
-| `mass_queue_entry_id` | — | mass_queue (Music Assistant Queue Actions) config entry, used for `mass_queue.get_album_tracks / get_artist_tracks / get_playlist_tracks`. The 0.3.0 name `queue_config_entry_id` is still accepted, and the visual editor rewrites it to the new key |
-| `screensaver_minutes` | `10` (0–1440) | Idle minutes before the screensaver. `0` turns it off |
+| `mass_queue_entry_id` | — | mass_queue (Music Assistant Queue Actions) config entry, used for `mass_queue.get_album_tracks / get_artist_tracks / get_playlist_tracks` and for lyrics (`mass_queue.send_command`). The 0.3.0 name `queue_config_entry_id` is still accepted, and the visual editor rewrites it to the new key |
+| `screensaver_minutes` | `10` (0–1440) | Idle minutes before the screensaver. `0` turns it off. The editor offers Off, 1, 5, 10, 15, 30, 60 and Custom; any 0–1440 value from YAML still loads |
 | `browse_limit` | `60` (1–500) | Items per Browse page (infinite scroll pages by `offset`) |
 | `queue_limit` | `200` (1–1000) | Upcoming items requested from `get_queue_items` (`limit_after`); out-of-range values are clamped |
 | `limit` | `8` (1–50) | Search results per type. 1-character queries always use 5 |
-| `default_tab` | `now` | `now`, `browse`, `search` or `queue` |
+| `default_tab` | `now` | `now`, `browse`, `search`, `queue` or `lyrics`. A tab that is turned off (or unknown) is ignored and Now Playing opens |
 | `library_only` | `false` | Search only the MA library |
 | `slow_ms` | `800` | Search replies slower than this switch on in-flight limiting |
 | `accent` | `mono` | Only `mono` exists so far |
@@ -146,8 +155,13 @@ views:
 | `backdrop` | `auto` | `full`, `light`, `static`, `off` or `auto`. See [Backdrop and performance](#backdrop-and-performance) |
 | `scale` | `auto` | Large-screen zoom. `auto` scales the whole UI by min(width/1420, height/800) once that is ≥ 1.15 (1920x1080 → 1.35, capped at 1.8). A number forces it; `1` turns it off |
 | `title` | `Jukebox` | Brand text in the header |
+| `show_lyrics` | `true` | Master switch for lyrics: art overlay toggle, Stage, Lyrics tab and screensaver lyrics. Needs `mass_queue_entry_id` |
+| `lyrics_tab` | `true` | Show the 5th **Lyrics** tab |
+| `screensaver_lyrics` | `true` | Previous / current / next line (synced) or a slow scroll (plain) on the screensaver |
+| `lyrics_seek` | `true` | Long-press (0.55 s) a synced line to seek there. Never on radio |
+| `lyrics_offset_ms` | `500` (−5000–5000) | Shift for synced lyrics; positive shows lines sooner |
 
-The visual editor covers entity, config entry, rooms (an entity list that keeps existing names), favorite entity, mass_queue entry, screensaver minutes, browse limit, backdrop and accent.
+The visual editor covers entity, config entry, rooms (an entity list that keeps existing names), favorite entity and mass_queue entry; a **Display** section (screensaver presets Off / 1 / 5 / 10 / 15 / 30 / 60 min plus Custom, screensaver lyrics, default tab, backdrop, accent); a **Lyrics** section (lyrics, Lyrics tab, long-press seek, offset); and an Advanced section (browse limit and the rest). Options you leave at their defaults are not written to YAML, and existing 0.3.x configs load unchanged.
 
 ## Backdrop and performance
 
@@ -301,7 +315,32 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 
 **Radio, audiobooks and podcasts.** These groups (and their filter chips) are hidden whenever they come back empty. With Radio Browser in Music Assistant, stations appear in search results (`radiobrowser://radio/<uuid>`) and in Browse > Radio. Try it in the harness with `?radio=1` or `?radio=lib`.
 
+## Lyrics
+
+Lyrics come from Music Assistant's own metadata (LRCLIB and friends) through **mass_queue**, so `mass_queue_entry_id` is required; without it the lyrics surfaces say "Lyrics unavailable".
+
+- **Lookup.** `mass_queue.send_command {config_entry_id: <mass_queue entry>, command: "music/item_by_uri", data: {uri}}` with `return_response`; lyrics are read from `metadata.lrc_lyrics` / `metadata.lyrics`. If both are empty the card calls `metadata/get_track_lyrics {track: <item>}`, which answers `[plain, lrc]` (`[null, null]` = not found). The reply shape is `{response: {response: …}}`. The first lookup of a song can take 8–33 s (LRCLIB rate limit); the card waits up to 60 s.
+- **Radio.** For a station, the card searches `music/search` for the stream's artist + title, takes the best track match (exact title first, then prefix; "(Live)" / "Remastered" variants rank below the plain title) and asks `get_track_lyrics` for it. Radio lyrics never seek.
+- **Surfaces** (all share one store, so a song is looked up once):
+  - **Art overlay**: the lyrics toggle at the top right of the art; remembered per device (`localStorage`, `jukebox-card:lyrics-overlay:v1`).
+  - **Stage**: the expand button next to it opens a full-screen lyrics view (Fullscreen API, WebKit fallback, or a fixed overlay where fullscreen is not allowed). Tap to show the transport controls and ✕; Esc or ✕ closes it.
+  - **Lyrics tab**: the 5th tab (`lyrics_tab`).
+  - **Screensaver**: previous / current / next line for synced lyrics, a slow scroll for plain lyrics (`screensaver_lyrics`).
+- **Synced lyrics** highlight the current line from the interpolated player position (plus `lyrics_offset_ms`) and keep it centred. **Long-press** a line for 0.55 s to send `media_player.media_seek {seek_position}` to `entity`; the line flashes and a toast confirms it. A plain tap does nothing, so scrolling never seeks.
+- **Plain lyrics** scroll in proportion to the track's progress and show an **Unsynced** chip. Scrolling by hand pauses the auto-scroll for a few seconds.
+- **States**: "Looking for lyrics…", "No lyrics found", and "Lyrics unavailable" (with Try again; a permission error adds a note that the HA user may need admin rights for `mass_queue.send_command`). Failures back off for 60 s; there is never more than one lookup per song in flight.
+- **Cache**: in-memory LRU (50 songs) plus `localStorage` (`jukebox-card:lyrics:v1`, 100 songs), keyed by URI (or `artist|title` for radio). Found lyrics are kept 30 days, "not found" 1 day.
+- **Look**: Black Frame Mono: the current line is white, the others translucent white, over whatever `backdrop` mode is active.
+
 ## Changelog
+
+### 0.4.0
+- Lyrics: synced and plain lyrics from Music Assistant via mass_queue, on the album art, a full-screen Stage, a new Lyrics tab and the screensaver.
+- Long-press a synced line to jump there (not on radio); plain lyrics scroll with the song.
+- Radio stations get lyrics by matching the stream's artist and title.
+- Clear states (looking / none / unavailable), one lookup per song, cached per device.
+- Editor: Display section with screensaver presets (Off, 1, 5, 10, 15, 30, 60 min, Custom) and a Lyrics section. Existing configs keep working.
+- See [CHANGELOG.md](CHANGELOG.md).
 
 ### 0.3.2
 - Search results are now a list: every artist, album, track, playlist and station is a row with Add to queue, Play next, Replace queue and Start radio icons on the right.
@@ -320,7 +359,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 - `hacs.json`: `{"name": "Jukebox Card", "filename": "jukebox-card.js", "render_readme": true}`. `filename` lets HACS find `jukebox-card.js` even though the repo is called `ha-jukebox-kiosk-card`.
 - `dist/` is **not committed**. `.github/workflows/release.yml` runs on a `v*` tag: `npm ci`, typecheck, build, then it attaches `dist/jukebox-card.js` and `jukebox-card-fonts.zip` to a GitHub release. HACS installs from the latest release's assets.
   - Why: committed build output makes every diff noisy, goes stale when someone forgets to rebuild, and is easy to mismatch with the source. A tag-built release always matches its tag, HACS lets users pick from the last 5 releases, and the repo stays small.
-  - To release: bump `version` in `package.json` and `VERSION` in `src/jukebox-card.ts`, commit, then `git tag -a v0.3.2 -m 'Jukebox Card 0.3.2' && git push origin v0.3.2` (push only that tag).
+  - To release: bump `version` in `package.json` and `VERSION` in `src/jukebox-card.ts`, commit, then `git tag -a v0.4.0 -m 'Jukebox Card 0.4.0' && git push origin v0.4.0` (push only that tag).
 - `test/shots/` (generated by the tests and screenshot scripts) is git-ignored; the curated screenshots used in this README are in `docs/`.
 - License: MIT (`LICENSE`). The bundled fonts are OFL (licence files ship in `dist/fonts/` and the fonts zip).
 

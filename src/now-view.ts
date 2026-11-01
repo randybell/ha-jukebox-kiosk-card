@@ -5,6 +5,8 @@ import { providerLabel } from './providers';
 import { mediaStyles, noFocus, fmtTime, provTpl, roomsOf, fire, ART, hash, playerArt, isRadio, RADIO_ART } from './shared';
 import { throttle } from './slider';
 import './slider';
+import './lyrics/lyrics-view';
+import type { LyricsStore } from './lyrics/store';
 import type { QueueModel, QueueSnapshot } from './queue-model';
 import type { HassEntity, HomeAssistant, JukeboxCardConfig } from './types';
 
@@ -16,13 +18,16 @@ interface Pending<T> { v: T; t: number }
 
 export class JbNow extends LitElement {
   static properties = {
-    hass: { attribute: false }, config: { attribute: false }, queue: { attribute: false }, active: { type: Boolean },
-    _tick: { state: true }, _snap: { state: true }, _toast: { state: true },
+    hass: { attribute: false }, config: { attribute: false }, queue: { attribute: false }, active: { type: Boolean }, lyrics: { attribute: false },
+    _overlay: { state: true }, _tick: { state: true }, _snap: { state: true }, _toast: { state: true },
   };
   hass?: HomeAssistant;
   config!: JukeboxCardConfig;
   queue?: QueueModel;
   active = false;
+  lyrics?: LyricsStore;
+  /** lyrics over the art, remembered per device */
+  private _overlay = readOverlay();
   private _tick = 0;
   private _snap?: QueueSnapshot;
   private _toast = '';
@@ -56,6 +61,8 @@ export class JbNow extends LitElement {
     }
     return true;
   }
+
+  private toggleOverlay = () => { this._overlay = !this._overlay; writeOverlay(this._overlay); };
 
   // ---------- optimistic helpers ----------
   private held<T>(m: Map<string, Pending<T>>, key: string, actual: T, eq: (a: T, b: T) => boolean): T {
@@ -215,10 +222,19 @@ export class JbNow extends LitElement {
     const tb = (cls: string, ic: string, label: string, fn: () => void, on?: boolean, dot = false, dis = false) =>
       html`<button class="tb ${cls} ${on ? 'on' : ''}" tabindex="-1" aria-label=${label} aria-pressed=${on === undefined ? nothing : on ? 'true' : 'false'}
         ?disabled=${dis} @pointerdown=${noFocus} @click=${fn}>${icon(ic)}${dot ? html`<i class="dot"></i>` : nothing}</button>`;
+    const showLyr = !idle && this.config.show_lyrics !== false && !!this.lyrics;
     return html`<div class="nw ${idle ? 'idle' : ''}" data-state=${e?.state ?? 'unknown'}>
-      <div class="art" style="background:${ART[hash(title || 'x') % ART.length]}">
+      <div class="art ${showLyr && this._overlay ? 'lyr-on' : ''}" style="background:${ART[hash(title || 'x') % ART.length]}">
         ${pic ? html`<img src=${pic} alt="" draggable="false" @error=${(ev: Event) => ((ev.target as HTMLElement).style.display = 'none')} />`
           : html`<span class="ph">${icon('disc')}</span>`}
+        ${showLyr && this._overlay ? html`<jb-lyrics class="ovl" mode="overlay" .hass=${this.hass} .config=${this.config} .store=${this.lyrics}
+          ?active=${this.active}></jb-lyrics>` : nothing}
+        ${idle ? nothing : html`<div class="art-btns">
+          ${showLyr ? html`<button class="ab lyr ${this._overlay ? 'on' : ''}" tabindex="-1" aria-label="Lyrics" aria-pressed=${this._overlay ? 'true' : 'false'}
+            @pointerdown=${noFocus} @click=${this.toggleOverlay}>${icon('lyrics')}</button>` : nothing}
+          <button class="ab stg" tabindex="-1" aria-label="Full screen" @pointerdown=${noFocus}
+            @click=${() => fire(this, 'jukebox-stage', { open: true })}>${icon('fullscreen')}</button>
+        </div>`}
       </div>
       <div class="info">
         <div class="badges">${prov ? html`<span class="pv big">${prov}</span>` : nothing}
@@ -258,6 +274,13 @@ export class JbNow extends LitElement {
     .nw::-webkit-scrollbar { display: none; }
     .art { position: relative; width: min(calc(100cqw - 2 * var(--_pad)), 44cqh, 580px); aspect-ratio: 1; border-radius: 14px; overflow: hidden;
       box-shadow: 0 24px 60px #000000b3, 0 0 0 1px #ffffff14; }
+    .art .ovl { position: absolute; inset: 0; z-index: 1; }
+    .art-btns { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; gap: 8px; }
+    .ab { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: #000000a6; color: rgba(255, 255, 255, .72);
+      border: 1px solid #ffffff2e; box-shadow: 0 4px 14px #0007; transition: background 150ms, color 150ms; }
+    .ab .i { width: 22px; height: 22px; }
+    .ab.on { background: #fff; color: #000; border-color: #fff; }
+    .ab:active { transform: scale(.94); }
     .art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .art .ph { position: absolute; inset: 0; display: grid; place-items: center; background: #111; }
     .art .ph .i { width: 30%; height: 30%; color: #ffffff30; }
@@ -342,3 +365,7 @@ export class JbNow extends LitElement {
   `];
 }
 if (!customElements.get('jb-now')) customElements.define('jb-now', JbNow);
+
+const OVERLAY_KEY = 'jukebox-card:lyrics-overlay:v1';
+function readOverlay() { try { return localStorage.getItem(OVERLAY_KEY) === '1'; } catch { return false; } }
+function writeOverlay(on: boolean) { try { localStorage.setItem(OVERLAY_KEY, on ? '1' : '0'); } catch { /* private mode */ } }

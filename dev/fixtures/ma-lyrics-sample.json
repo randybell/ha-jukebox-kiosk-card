@@ -1,0 +1,35 @@
+{
+  "_note": "INVENTED placeholder lyrics for the dev harness and tests. Not real song lyrics. Shapes mirror mass_queue.send_command (REST: {service_response:{response:X}}, websocket callService: {context, response:{response:X}}); ids are fake.",
+  "lines": [
+    "Placeholder line one under a paper moon",
+    "Counting cardboard stars across the ceiling",
+    "The kettle hums a tune it never learned",
+    "Every window here is painted blue",
+    "Sample text is drifting down the hallway",
+    "Nobody wrote these words for singing",
+    "A test pattern dancing on the radio",
+    "We left the porch light on for nobody",
+    "Lorem lanterns glowing in the harbor",
+    "Footsteps echo in a borrowed staircase",
+    "The clock forgot the hour it was keeping",
+    "Mock rain is tapping softly on the glass",
+    "Hold this line a little longer",
+    "Silver static fills the empty kitchen",
+    "Nothing here is real but the rhythm",
+    "Fold the map and follow the chorus",
+    "Ten more bars until the bridge arrives",
+    "Synthetic sunsets over plastic hills",
+    "Whisper something only tests can hear",
+    "The final verse is just a placeholder"
+  ],
+  "item_by_uri_example": {
+    "item_id": "12345", "provider": "library", "name": "Example Track", "media_type": "track", "uri": "library://track/12345", "duration": 200,
+    "provider_mappings": [{ "item_id": "XXXXXXXX", "provider_domain": "apple_music", "provider_instance": "apple_music--XXXXXXXX", "available": true }],
+    "metadata": { "lyrics": null, "lrc_lyrics": null }
+  },
+  "get_track_lyrics_examples": {
+    "found_synced": [null, "[00:06.00]Placeholder line one under a paper moon\n[00:15.00]Counting cardboard stars across the ceiling"],
+    "found_plain": ["Placeholder line one under a paper moon\nCounting cardboard stars across the ceiling", null],
+    "not_found": [null, null]
+  }
+}

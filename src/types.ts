@@ -24,7 +24,7 @@ export interface HomeAssistant {
 }
 
 export interface RoomConfig { name?: string; entity: string; icon?: string }
-export type TabId = 'now' | 'browse' | 'search' | 'queue';
+export type TabId = 'now' | 'browse' | 'search' | 'queue' | 'lyrics';
 export type Enqueue = 'play' | 'next' | 'add' | 'replace' | 'replace_next';
 
 export interface JukeboxCardConfig {
@@ -42,8 +42,18 @@ export interface JukeboxCardConfig {
   mass_queue_entry_id?: string;
   /** @deprecated 0.3.0 name of mass_queue_entry_id, still accepted. */
   queue_config_entry_id?: string;
-  /** Minutes of no touches before the screensaver. Default 10. 0 disables. */
+  /** Minutes of no touches before the screensaver. Default 10. 0 disables. Any whole number 0-1440. */
   screensaver_minutes?: number;
+  /** Lyrics (needs mass_queue_entry_id). Master switch for every lyrics surface and lookup. Default true. */
+  show_lyrics?: boolean;
+  /** The Lyrics tab. Default true (when show_lyrics is on). */
+  lyrics_tab?: boolean;
+  /** Lyrics lines on the screensaver. Default true (when show_lyrics is on). */
+  screensaver_lyrics?: boolean;
+  /** Long-press a synced line to seek there. Default true. */
+  lyrics_seek?: boolean;
+  /** Shift synced lyrics: positive shows lines sooner. Default 500 (HA reports whole seconds). -5000..5000. */
+  lyrics_offset_ms?: number;
   /** Items fetched per Browse page. Default 60. */
   browse_limit?: number;
   /** Upcoming queue items fetched. Default 200. */

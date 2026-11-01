@@ -19,6 +19,11 @@
     const params = new URLSearchParams(location.search);
     if (params.get('log') === '1') document.body.classList.add('log');
     if (params.get('fresh') === '1') localStorage.removeItem('jukebox-card:recents:v1');
+    // lyrics: fresh=1 also empties the lyrics cache unless keeplyrics=1; overlay=1|0 presets the per-device art overlay toggle
+    if (params.get('fresh') === '1' && params.get('keeplyrics') !== '1') localStorage.removeItem('jukebox-card:lyrics:v1');
+    if (params.has('overlay')) localStorage.setItem('jukebox-card:lyrics-overlay:v1', params.get('overlay') === '1' ? '1' : '0');
+    // cfg=<json>: extra card options (e.g. {"lyrics_tab":false}), merged last
+    const extra = params.get('cfg') ? JSON.parse(params.get('cfg')) : {};
     if (params.get('recents') === '1' && !localStorage.getItem('jukebox-card:recents:v1'))
       localStorage.setItem('jukebox-card:recents:v1', JSON.stringify(['Miles Davis', 'Abbey Road', 'Jazz FM', 'Eagles', 'Fleetwood']));
     const card = document.createElement('jukebox-card');
@@ -39,6 +44,7 @@
       default_tab: params.get('tab') || 'now',
       ...(params.get('backdrop') ? { backdrop: params.get('backdrop') } : {}),
       font_base: '../dist/fonts',
+      ...extra,
     });
     card.hass = hass;
     document.body.appendChild(card);
