@@ -8,13 +8,13 @@ import './browse-view';
 import './queue-view';
 import './editor';
 import './lyrics/lyrics-view';
-import { LyricsStore } from './lyrics/store';
+import { LyricsStore, type LyricsStatus } from './lyrics/store';
 import { QueueModel } from './queue-model';
 import { roomsOf, playerArt } from './shared';
 import { resolveBackdrop, drawPreblurred, BACKDROPS, prefersReducedMotion, type BackdropMode } from './backdrop';
 import type { HomeAssistant, JukeboxCardConfig, TabId } from './types';
 
-export const VERSION = '0.4.0';
+export const VERSION = '0.4.1';
 const TABS: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'now', label: 'Now Playing', icon: 'disc' },
   { id: 'browse', label: 'Browse', icon: 'browse' },
@@ -25,6 +25,8 @@ const TABS: Array<{ id: TabId; label: string; icon: string }> = [
 const CHILDREN = ['jb-now', 'jb-browse', 'jb-search', 'jb-queue'];
 const bool = (v: unknown) => v === undefined || typeof v === 'boolean';
 const num = (v: unknown, lo: number, hi: number) => v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi);
+/** Screensaver status line for lyrics states that have nothing to show (shown only when screensaver lyrics are on). */
+const SAVER_LYRICS_STATUS: Partial<Record<LyricsStatus, string>> = { none: 'No lyrics', error: 'Lyrics unavailable', loading: 'Looking for lyrics…' };
 
 export class JukeboxCard extends LitElement {
   static properties = {
@@ -365,7 +367,10 @@ export class JukeboxCard extends LitElement {
     const playing = ent?.state === 'playing' || ent?.state === 'paused';
     const lang = this.hass?.locale?.language || this.hass?.language || undefined;
     const ls = this.lyrics.state.status;
-    const svLyrics = playing && this._config.show_lyrics !== false && this._config.screensaver_lyrics !== false && (ls === 'synced' || ls === 'plain');
+    const svOn = playing && this._config.show_lyrics !== false && this._config.screensaver_lyrics !== false;
+    const svLyrics = svOn && (ls === 'synced' || ls === 'plain');
+    // No lyrics to show: a small, quiet status line instead, inside the drifting block so it moves with the burn-in shift.
+    const svStatus = svOn ? SAVER_LYRICS_STATUS[ls] : undefined;
     let date = '';
     try { date = this._now.toLocaleDateString(lang, { weekday: 'long', month: 'long', day: 'numeric' }); } catch { /* */ }
     return html`<div class="saver ${this._saver}" role="button" aria-label="Wake" @pointerdown=${this.wake} @click=${this.wake}
@@ -377,6 +382,7 @@ export class JukeboxCard extends LitElement {
         ${playing && at.media_title ? html`<div class="sv-np">${pic ? html`<img src=${pic} alt="" draggable="false" />` : nothing}
           <span><b>${at.media_title}</b><small>${[at.media_artist, ent?.state === 'paused' ? 'Paused' : ''].filter(Boolean).join(' · ')}</small></span></div>` : nothing}
         ${svLyrics ? html`<jb-lyrics class="sv-ly" mode="saver" .hass=${this.hass} .config=${this._config} .store=${this.lyrics} ?active=${this._saver === 'on'}></jb-lyrics>` : nothing}
+        ${svStatus ? html`<div class="sv-lys" role="status" data-status=${ls}>${svStatus}</div>` : nothing}
       </div>
       <div class="sv-hint">Tap to wake</div>
     </div>`;
@@ -485,6 +491,7 @@ export class JukeboxCard extends LitElement {
     .bd-static .saver, .bd-off .saver { background: #000; }
     .sv-drift.has-ly .sv-clock { font-size: clamp(56px, 10cqw, 140px); }
     .sv-ly { margin-top: 18px; width: min(820px, 72cqw); }
+    .sv-lys { margin-top: 14px; font-size: clamp(12px, 1.1cqw, 15px); font-weight: 600; letter-spacing: .04em; color: #ffffff6b; text-shadow: 0 1px 8px #000a; white-space: nowrap; }
     /* ---- Stage ---- */
     :host(:fullscreen), :host(:-webkit-full-screen) { background: #000; }
     .stage { position: absolute; inset: 0; z-index: 45; background: #000; overflow: hidden; container: stage / size; animation: svin 300ms ease both; cursor: default; }

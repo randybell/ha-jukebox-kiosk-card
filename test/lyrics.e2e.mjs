@@ -1,4 +1,4 @@
-// v0.4.0 lyrics + Stage + editor checks against the mock hass (dev/index.html, dev/editor.html). Real pointer/touch input via CDP.
+// v0.4.0/0.4.1 lyrics + Stage + screensaver status + editor checks against the mock hass (dev/index.html, dev/editor.html). Real pointer/touch input via CDP.
 // Usage: (serve the project root on :8765) node test/lyrics.e2e.mjs        — all lyric text in the harness is invented.
 import puppeteer from 'puppeteer-core';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -321,6 +321,63 @@ const expectedCur = (pg, sel) => pg.evaluate((s) => {
   await open(sv, '&tab=now&saver=0.02' + '&cfg=' + encodeURIComponent(J({ screensaver_lyrics: false })));
   await sleep(2200);
   check('V4 screensaver_lyrics:false → no lyrics on the screensaver', await sv.evaluate(() => !__card.shadowRoot.querySelector('jb-lyrics[mode=saver]')));
+
+  // 0.4.1: a quiet status line on the screensaver when there are no lyrics to show (none / unavailable / loading)
+  const svLabel = (pg) => pg.evaluate(() => {
+    const r = __card.shadowRoot, el = r.querySelector('.saver .sv-lys');
+    if (!el) return { shown: false, status: __card.lyrics.state.status, lyricsEl: !!r.querySelector('jb-lyrics[mode=saver]') };
+    const cs = getComputedStyle(el), drift = el.closest('.sv-drift');
+    const box = (e) => { const b = e?.getBoundingClientRect(); return b ? { l: b.left, t: b.top, r: b.right, b: b.bottom } : null; };
+    const hit = (a, b) => !!a && !!b && a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+    const me = box(el), alpha = Number((cs.color.match(/rgba?\(([^)]+)\)/)?.[1].split(',')[3] ?? '1').trim());
+    return { shown: true, text: el.textContent.trim(), status: __card.lyrics.state.status, dataStatus: el.dataset.status,
+      lyricsEl: !!r.querySelector('jb-lyrics[mode=saver]'), inDrift: !!drift, driftAnim: drift ? getComputedStyle(drift).animationName : '',
+      fontPx: parseFloat(cs.fontSize), alpha, shadow: cs.textShadow !== 'none',
+      overlaps: ['.sv-clock', '.sv-date', '.sv-np', '.sv-hint'].filter((s) => hit(me, box(r.querySelector('.saver ' + s)))),
+      onScreen: me.l >= 0 && me.t >= 0 && me.r <= innerWidth && me.b <= innerHeight };
+  });
+  const quiet = (l) => l.shown && l.inDrift && l.driftAnim !== 'none' && !l.lyricsEl && l.fontPx <= 15 && l.alpha > 0 && l.alpha <= 0.5 && l.shadow && l.overlaps.length === 0;
+  const states = [
+    ['V5', 'none', '&lyrics=none', 'No lyrics'],
+    ['V6', 'error', '&lyrfail=err', 'Lyrics unavailable'],
+    ['V7', 'loading', '&lyrlat=60000', 'Looking for lyrics…'],
+  ];
+  for (const [id, st, q, label] of states) {
+    await open(sv, '&tab=now&saver=0.02' + q);
+    await sv.waitForFunction((st) => __card.lyrics.state.status === st && !!__card.shadowRoot.querySelector('.saver .sv-lys'), { timeout: 8000 }, st).catch(() => {});
+    await sleep(300);
+    const l = await svLabel(sv);
+    check(`${id} screensaver, lyrics ${st} → small translucent "${label}" inside the drifting block, clear of clock/track/hint`, quiet(l) && l.text === label && l.dataStatus === st && l.onScreen, J(l));
+  }
+  // reduced motion: the label still rides the block's 60 s hop
+  await sv.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+  await open(sv, '&tab=now&saver=0.02&lyrics=none');
+  await sv.waitForSelector('pierce/.saver .sv-lys', { timeout: 8000 }).catch(() => {});
+  const rm = await svLabel(sv);
+  check('V8 reduced motion: the status line moves with the hop animation', rm.shown && rm.driftAnim === 'hop', J({ shown: rm.shown, driftAnim: rm.driftAnim }));
+  await sv.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+  // hidden when lyrics are showing, or when lyrics are off for the screensaver
+  await open(sv, '&tab=now&saver=0.02');
+  await sv.waitForFunction((s) => !!eval(s), { timeout: 8000 }, SEL.saver).catch(() => {});
+  await sleep(600);
+  const syn = await svLabel(sv);
+  check('V9 synced lyrics on the screensaver → no status line', !syn.shown && syn.lyricsEl, J(syn));
+  await sv.evaluate(() => __playTrack('Dreams', 120)); await sleep(800);
+  const pl = await svLabel(sv);
+  check('V10 plain lyrics on the screensaver → no status line', !pl.shown && pl.lyricsEl, J(pl));
+  for (const [id, cfg] of [['V11', { screensaver_lyrics: false }], ['V12', { show_lyrics: false }]]) {
+    await open(sv, '&tab=now&saver=0.02&lyrics=none&cfg=' + encodeURIComponent(J(cfg)));
+    await sleep(2200);
+    const off = await svLabel(sv);
+    check(`${id} ${Object.keys(cfg)[0]}: false + no lyrics → no status line`, !off.shown && !off.lyricsEl, J(off));
+  }
+  // the status line follows the store: loading → none without leaving the screensaver
+  await open(sv, '&tab=now&saver=0.02&lyrics=none&lyrlat=1500');
+  await sv.waitForFunction(() => __card.shadowRoot.querySelector('.saver .sv-lys')?.dataset.status === 'loading', { timeout: 8000 }).catch(() => {});
+  const t1 = (await svLabel(sv)).text;
+  await sv.waitForFunction(() => __card.shadowRoot.querySelector('.saver .sv-lys')?.dataset.status === 'none', { timeout: 8000 }).catch(() => {});
+  const t2 = (await svLabel(sv)).text;
+  check('V13 status line updates live: "Looking for lyrics…" then "No lyrics"', t1 === 'Looking for lyrics…' && t2 === 'No lyrics', J([t1, t2]));
   await sv.close();
 }
 

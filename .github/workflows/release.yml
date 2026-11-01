@@ -38,7 +38,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check third-party notices are up to date
+        run: |
+          test -s dist/THIRD_PARTY_NOTICES.md
+          test -s dist/fonts/THIRD_PARTY_NOTICES.md
+          git diff --exit-code -- THIRD_PARTY_NOTICES.md
+
       - name: Zip fonts
+        # The zip holds the fonts, their OFL texts (LICENSE-*.txt) and THIRD_PARTY_NOTICES.md.
         run: cd dist && zip -r ../jukebox-card-fonts.zip fonts
 
       - name: Publish release
@@ -46,5 +53,6 @@ jobs:
         with:
           files: |
             dist/jukebox-card.js
+            dist/THIRD_PARTY_NOTICES.md
             jukebox-card-fonts.zip
           generate_release_notes: true

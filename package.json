@@ -1,6 +1,6 @@
 {
   "name": "ha-jukebox-card",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Jukebox Card: kiosk jukebox card for Home Assistant + Music Assistant (Now Playing, Browse, Search, Queue, screensaver)",
   "repository": {
     "type": "git",
@@ -16,6 +16,7 @@
     "perf": "node test/perf.mjs 3",
     "shots": "node test/shots-m2.mjs"
   },
+  "author": "Randy Bell",
   "license": "MIT",
   "dependencies": {
     "lit": "^3.3.3"

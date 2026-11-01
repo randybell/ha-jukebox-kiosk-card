@@ -1,4 +1,4 @@
-# Jukebox Card (`ha-jukebox-kiosk-card`) 0.4.0
+# Jukebox Card (`ha-jukebox-kiosk-card`) 0.4.1
 
 This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox kiosk. It uses the Black Frame Mono look: black header and footer, the album art blurred behind the centre, white active buttons and light-white inactive ones.
 
@@ -93,6 +93,18 @@ URL parameters:
 
 Every call is recorded in `window.__calls`, except read-only lyrics lookups (`mass_queue.send_command`), which go to `window.__lyricsLog`. `window.__setNowPlaying({artist, title, radio, uri, duration, position})` and `window.__playTrack(name, position)` change what is playing. `test/run.mjs` drives the card with real CDP mouse, touch and keyboard input and writes `test/shots/results.json`. The browser tests are hermetic (`test/intercept.mjs`): `/api/media_player_proxy/…` and https images are answered with a generated SVG, and any request to a plain-http host other than the dev server fails (test 16o checks that the card never asks the MA host directly).
 
+## Requirements
+
+- **Home Assistant** with a dashboard you can add a custom card to.
+- **Music Assistant**: a running Music Assistant server and the official **Music Assistant** integration in Home Assistant (`music_assistant`). Search, Browse, transport, volume and every `play_media` go through it.
+- **A player Music Assistant can play to**: WiiM speakers (what this card was built with) or any other Music Assistant player. Group players such as `media_player.everywhere` work too.
+- **mass_queue** (Music Assistant Queue Actions), installed from HACS: needed for track lists and lyrics. Set `mass_queue_entry_id` in the card config.
+
+Without mass_queue the card still works for search, the Browse grid, transport, volume, rooms and playing anything through `music_assistant`, but:
+- album and artist pages fall back to search ("matched by search") instead of the real track lists, and playlist pages show a note instead of their tracks (Play and Shuffle still work);
+- the Queue tab shows "Queue unavailable", because it reads and edits the queue with `mass_queue` actions (`get_queue_items` and friends);
+- lyrics show "Lyrics unavailable".
+
 ## Install on Home Assistant (nothing here touches your server)
 
 ### HACS
@@ -104,7 +116,7 @@ Every call is recorded in `window.__calls`, except read-only lyrics lookups (`ma
 ### Manual
 
 1. Download `jukebox-card.js` and `jukebox-card-fonts.zip` from a release (or run `npm run build`) and put them in `/config/www/jukebox/` as `jukebox-card.js` and `fonts/`.
-2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.4.0`, type **JavaScript module**.
+2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.4.1`, type **JavaScript module**.
    - Change `?v=` on every update, or Fully Kiosk will keep the old file.
    - Fonts are found in `fonts/` next to the `.js` automatically.
 
@@ -317,7 +329,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 
 ## Lyrics
 
-Lyrics come from Music Assistant's own metadata (LRCLIB and friends) through **mass_queue**, so `mass_queue_entry_id` is required; without it the lyrics surfaces say "Lyrics unavailable".
+Lyrics come from Music Assistant's own metadata (its LRCLIB provider, with Genius as an optional fallback) through **mass_queue**, so `mass_queue_entry_id` is required; without it the lyrics surfaces say "Lyrics unavailable".
 
 - **Lookup.** `mass_queue.send_command {config_entry_id: <mass_queue entry>, command: "music/item_by_uri", data: {uri}}` with `return_response`; lyrics are read from `metadata.lrc_lyrics` / `metadata.lyrics`. If both are empty the card calls `metadata/get_track_lyrics {track: <item>}`, which answers `[plain, lrc]` (`[null, null]` = not found). The reply shape is `{response: {response: …}}`. The first lookup of a song can take 8–33 s (LRCLIB rate limit); the card waits up to 60 s.
 - **Radio.** For a station, the card searches `music/search` for the stream's artist + title, takes the best track match (exact title first, then prefix; "(Live)" / "Remastered" variants rank below the plain title) and asks `get_track_lyrics` for it. Radio lyrics never seek.
@@ -325,14 +337,37 @@ Lyrics come from Music Assistant's own metadata (LRCLIB and friends) through **m
   - **Art overlay**: the lyrics toggle at the top right of the art; remembered per device (`localStorage`, `jukebox-card:lyrics-overlay:v1`).
   - **Stage**: the expand button next to it opens a full-screen lyrics view (Fullscreen API, WebKit fallback, or a fixed overlay where fullscreen is not allowed). Tap to show the transport controls and ✕; Esc or ✕ closes it.
   - **Lyrics tab**: the 5th tab (`lyrics_tab`).
-  - **Screensaver**: previous / current / next line for synced lyrics, a slow scroll for plain lyrics (`screensaver_lyrics`).
+  - **Screensaver**: previous / current / next line for synced lyrics, a slow scroll for plain lyrics (`screensaver_lyrics`). With no lyrics to show, a small translucent status line ("No lyrics", "Lyrics unavailable", "Looking for lyrics…") sits under the track info and drifts with the clock.
 - **Synced lyrics** highlight the current line from the interpolated player position (plus `lyrics_offset_ms`) and keep it centred. **Long-press** a line for 0.55 s to send `media_player.media_seek {seek_position}` to `entity`; the line flashes and a toast confirms it. A plain tap does nothing, so scrolling never seeks.
 - **Plain lyrics** scroll in proportion to the track's progress and show an **Unsynced** chip. Scrolling by hand pauses the auto-scroll for a few seconds.
 - **States**: "Looking for lyrics…", "No lyrics found", and "Lyrics unavailable" (with Try again; a permission error adds a note that the HA user may need admin rights for `mass_queue.send_command`). Failures back off for 60 s; there is never more than one lookup per song in flight.
 - **Cache**: in-memory LRU (50 songs) plus `localStorage` (`jukebox-card:lyrics:v1`, 100 songs), keyed by URI (or `artist|title` for radio). Found lyrics are kept 30 days, "not found" 1 day.
 - **Look**: Black Frame Mono: the current line is white, the others translucent white, over whatever `backdrop` mode is active.
 
+## Credits
+
+This card is a front end; the real work is done by these projects:
+
+- **[mass_queue](https://github.com/droans/mass_queue)** (Music Assistant Queue Actions) by [droans](https://github.com/droans), MIT: the queue, the album, artist and playlist track lists, and the lyrics lookups all go through its actions.
+- **[Music Assistant](https://www.music-assistant.io)** ([GitHub](https://github.com/music-assistant)): the music library, players, search and metadata, through the official [Home Assistant integration](https://www.home-assistant.io/integrations/music_assistant/).
+- **[Home Assistant](https://www.home-assistant.io)**: the dashboard the card runs in.
+- **Lyrics**: [LRCLIB](https://lrclib.net) and [Genius](https://genius.com) are lyrics providers in Music Assistant ([metadata providers](https://www.music-assistant.io/metadata/)). Music Assistant fetches the lyrics; the card never contacts LRCLIB or Genius, and only displays what Music Assistant returns. Lyrics remain the copyright of their owners.
+- **[Lit](https://lit.dev)** ([GitHub](https://github.com/lit/lit)) by Google LLC, BSD-3-Clause: bundled into `jukebox-card.js`.
+- **Fonts** (SIL Open Font License 1.1), self-hosted from the [Fontsource](https://fontsource.org) packages:
+  - [Inter](https://rsms.me/inter/) by Rasmus Andersson and The Inter Project Authors ([GitHub](https://github.com/rsms/inter));
+  - [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans) by Gumpita Rahayu (Tokotype) and The Plus Jakarta Sans Project Authors.
+
+**Third-party notices.** [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists every package bundled into `jukebox-card.js` and every shipped font, with its version, license and full license text. It ships with every release, both as a release asset and inside `jukebox-card-fonts.zip`, and the minified bundle keeps Lit's license comments. `npm run build` regenerates it.
+
+This project is not affiliated with or endorsed by Music Assistant, Home Assistant, WiiM, Apple or Genius. All trademarks belong to their owners.
+
 ## Changelog
+
+### 0.4.1
+- Screensaver: when lyrics are on but there are none to show, a small, quiet status line ("No lyrics", "Lyrics unavailable" or "Looking for lyrics…") appears under the track info and drifts with the clock. Nothing else changes.
+- Docs and licensing: credits, requirements, third-party notices.
+- The release now ships `THIRD_PARTY_NOTICES.md` (as an asset and in the fonts zip), and the minified bundle keeps license comments.
+- See [CHANGELOG.md](CHANGELOG.md).
 
 ### 0.4.0
 - Lyrics: synced and plain lyrics from Music Assistant via mass_queue, on the album art, a full-screen Stage, a new Lyrics tab and the screensaver.
@@ -357,11 +392,11 @@ Lyrics come from Music Assistant's own metadata (LRCLIB and friends) through **m
 ## Repository, releases and HACS
 
 - `hacs.json`: `{"name": "Jukebox Card", "filename": "jukebox-card.js", "render_readme": true}`. `filename` lets HACS find `jukebox-card.js` even though the repo is called `ha-jukebox-kiosk-card`.
-- `dist/` is **not committed**. `.github/workflows/release.yml` runs on a `v*` tag: `npm ci`, typecheck, build, then it attaches `dist/jukebox-card.js` and `jukebox-card-fonts.zip` to a GitHub release. HACS installs from the latest release's assets.
+- `dist/` is **not committed**. `.github/workflows/release.yml` runs on a `v*` tag: `npm ci`, typecheck, build, then it attaches `dist/jukebox-card.js`, `dist/THIRD_PARTY_NOTICES.md` and `jukebox-card-fonts.zip` to a GitHub release. HACS installs from the latest release's assets.
   - Why: committed build output makes every diff noisy, goes stale when someone forgets to rebuild, and is easy to mismatch with the source. A tag-built release always matches its tag, HACS lets users pick from the last 5 releases, and the repo stays small.
-  - To release: bump `version` in `package.json` and `VERSION` in `src/jukebox-card.ts`, commit, then `git tag -a v0.4.0 -m 'Jukebox Card 0.4.0' && git push origin v0.4.0` (push only that tag).
+  - To release: bump `version` in `package.json` (and `package-lock.json`) and `VERSION` in `src/jukebox-card.ts`, run `npm run build` so `THIRD_PARTY_NOTICES.md` is current, commit, then `git tag -a v0.4.1 -m 'Jukebox Card 0.4.1' && git push origin v0.4.1` (push only that tag).
 - `test/shots/` (generated by the tests and screenshot scripts) is git-ignored; the curated screenshots used in this README are in `docs/`.
-- License: MIT (`LICENSE`). The bundled fonts are OFL (licence files ship in `dist/fonts/` and the fonts zip).
+- License: MIT (`LICENSE`), Copyright (c) 2026 Randy Bell. The bundled fonts are OFL (licence files ship in `dist/fonts/` and the fonts zip). Third-party licenses are in `THIRD_PARTY_NOTICES.md`, which ships with each release.
 
 ## Open questions (verify against the live system before relying on them)
 
