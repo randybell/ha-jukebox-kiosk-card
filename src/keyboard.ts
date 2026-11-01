@@ -16,7 +16,7 @@ const HOLD_CLEAR_MS = 600;
 interface KeyDef { id: string; label?: string; cls?: string; span?: number; aria?: string; icon?: string; act: () => KeyDetail | 'toggle' }
 
 /**
- * On-screen alphabetical keyboard (TouchTunes / Android TV style).
+ * On-screen alphabetical keyboard (TV-app style).
  * Every key is a <button tabindex="-1">; pointerdown is preventDefault-ed so no key ever takes focus and
  * nothing editable exists, so the OS keyboard never opens.
  */

@@ -1,4 +1,11 @@
-# Jukebox Card (`ha-jukebox-kiosk-card`) 0.5.0
+> [!WARNING]
+> **This repository is deprecated. The Jukebox Card now ships inside the Jukebox Kiosk integration:
+> [randybell/ha-jukebox-kiosk](https://github.com/randybell/ha-jukebox-kiosk).**
+> 0.5.1 is the last release here, and it gets no more fixes. The integration bundles the same card, so you
+> install one thing, add no dashboard resource and unzip no fonts. mass_queue is no longer needed.
+> Your existing `type: custom:jukebox-card` configs keep working. See [Moving to Jukebox Kiosk](#moving-to-jukebox-kiosk).
+
+# Jukebox Card (`ha-jukebox-kiosk-card`) 0.5.1
 
 This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox kiosk. It uses the Black Frame Mono look: black header and footer, the album art blurred behind the centre, white active buttons and light-white inactive ones.
 
@@ -10,11 +17,58 @@ This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox ki
 - backdrop performance modes for slow kiosk tablets (see [Backdrop and performance](#backdrop-and-performance))
 - automatic large-screen scaling (1920x1080 and up)
 
-Search has no text input. You type on the on-screen keyboard, which works like the YouTube app on Android TV or a TouchTunes jukebox, and the results update on every keystroke.
+Search has no text input. You type on the on-screen keyboard, which works like a TV app's keyboard, and the results update on every keystroke.
 
 The repository is `randybell/ha-jukebox-kiosk-card`. The card's element is `custom:jukebox-card`, and its file is `jukebox-card.js`.
 
 Version history is in [CHANGELOG.md](CHANGELOG.md). Building, tests and releases are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Moving to Jukebox Kiosk
+
+Jukebox Kiosk 0.6.0 is a Home Assistant integration (`jukebox_kiosk`) with the Jukebox Card built in.
+It needs Home Assistant 2026.10.0 or newer, plus the official **Music Assistant** integration, already set up.
+Jukebox Kiosk uses that integration's connection, so it has no URL or token of its own.
+
+1. **Back up.** Settings → System → Backups → **Backup now**. If you edit dashboards in the UI, you can also
+   copy each Jukebox dashboard's YAML (dashboard ⋮ → Edit → ⋮ → Raw configuration editor).
+2. **Add the new repository to HACS.** HACS → ⋮ → **Custom repositories** →
+   `https://github.com/randybell/ha-jukebox-kiosk`, category **Integration**.
+3. **Install it.** Open **Jukebox Kiosk** in HACS → **Download** → restart Home Assistant. Then go to
+   **Settings → Devices & services → Add integration → Jukebox Kiosk**. With one Music Assistant server it is
+   picked automatically. With more than one, choose which to use.
+4. **Remove the old card.** When the integration starts, it looks for dashboard resources that still point at
+   `/hacsfiles/ha-jukebox-kiosk-card/` and deletes them for you, so the card doesn't load twice. Then a
+   Repairs issue (**Settings → System → Repairs**) asks you to finish the job:
+   - *"Remove the old Jukebox Card plugin"*: in HACS, open **Jukebox Card** → ⋮ → **Remove**, then restart
+     Home Assistant. The issue stays, across restarts too, until the old plugin's files are gone.
+   - *"Remove the old Jukebox Card resource"* (only if your resources are in YAML, `lovelace: resource_mode: yaml`):
+     the integration can't edit YAML. Delete the `/hacsfiles/ha-jukebox-kiosk-card/jukebox-card.js` line
+     from your resources yourself, remove the plugin in HACS, then restart.
+
+   You can also do this by hand: **Settings → Dashboards → ⋮ → Resources**. Delete the
+   `/hacsfiles/ha-jukebox-kiosk-card/…` entry, then remove the plugin in HACS.
+   Don't add a resource for the new card. The integration loads it on every dashboard by itself.
+5. **Dashboards: no YAML changes needed.** Keep `type: custom:jukebox-card` and every option as it is,
+   including `config_entry_id` (your Music Assistant entry, still required) and `entity`.
+   - `backend` defaults to `auto`, which uses the new integration once it's loaded. `mass_queue_entry_id`
+     is then ignored (it only applies to `backend: mass_queue`), so you can leave it in or delete it.
+   - If you set `font_base` to the old `/hacsfiles/ha-jukebox-kiosk-card/fonts/` folder, delete that line.
+     The integration serves its own fonts.
+   - **mass_queue:** the card no longer uses it. You can uninstall mass_queue only if nothing else needs it:
+     other cards (several media cards use mass_queue for queues), automations or scripts that call
+     `mass_queue.*` actions, or a card you pinned to `backend: mass_queue`. If you're not sure, leave it
+     installed. It does no harm.
+6. **Hard-refresh every browser and kiosk device**, and do it after step 4's restart. On a desktop:
+   Ctrl+Shift+R (Cmd+Shift+R on a Mac). In the Companion app, use **Reset frontend cache** in the app's
+   debugging settings, or force-close and reopen it. For a kiosk browser, clear its cache or restart the app.
+   Pages that stay open keep running the old card until they reload.
+
+**Who may do what (new).** Admins can do everything. By default every non-admin user, such as a kiosk login, is a guest with Read, Playback, Queue and Library, so favourites (the heart button) work. Guests can change volume but can't regroup speakers; the Speakers permission is off for guests. An admin login isn't limited by these settings. You can change the guest permissions in the integration's options (Settings → Devices & services → Jukebox Kiosk → **Configure**).
+
+**Going back.** Delete the Jukebox Kiosk integration (Settings → Devices & services) and remove it in HACS.
+Reinstall this plugin (category **Dashboard**, version 0.5.1) and make sure its resource is listed under
+Dashboards → Resources. Then restart and hard-refresh. Delete the integration *before* you restore the old
+resource: while the integration is set up, it removes that resource again each time Home Assistant starts.
 
 ## Screenshots
 
