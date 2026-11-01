@@ -1,6 +1,6 @@
 {
   "name": "ha-jukebox-card",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Jukebox Card: kiosk jukebox card for Home Assistant + Music Assistant (Now Playing, Browse, Search, Queue, screensaver)",
   "repository": {
     "type": "git",
@@ -12,7 +12,7 @@
     "build": "rollup -c && node scripts/copy-fonts.mjs",
     "watch": "rollup -c -w",
     "typecheck": "tsc --noEmit",
-    "test": "node test/run.mjs && node test/unit/lyrics.unit.mjs && node test/lyrics.e2e.mjs",
+    "test": "node test/run.mjs && node test/unit/lyrics.unit.mjs && node test/lyrics.e2e.mjs && node test/unit/speakers.unit.mjs && node test/speakers.e2e.mjs",
     "perf": "node test/perf.mjs 3",
     "shots": "node test/shots-m2.mjs",
     "test:fit": "node test/fit.e2e.mjs"

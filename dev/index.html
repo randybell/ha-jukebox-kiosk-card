@@ -35,6 +35,16 @@
     if (params.has('overlay')) localStorage.setItem('jukebox-card:lyrics-overlay:v1', params.get('overlay') === '1' ? '1' : '0');
     // cfg=<json>: extra card options (e.g. {"lyrics_tab":false}), merged last
     const extra = params.get('cfg') ? JSON.parse(params.get('cfg')) : {};
+    // spk=dyn: 0.5 dynamic speakers (targets Everywhere / Indoor / Outdoor, two presets); target=<entity> presets the remembered group
+    if (params.get('fresh') === '1') localStorage.removeItem('jukebox-card:target:v1');
+    if (params.get('target')) localStorage.setItem('jukebox-card:target:v1', params.get('target'));
+    const L = 'media_player.living_room', K = 'media_player.kitchen', G = 'media_player.garage';
+    const spk = params.get('spk') === 'dyn' ? {
+      speaker_mode: 'dynamic',
+      targets: [{ entity: 'media_player.everywhere', name: 'Everywhere' }, { entity: 'media_player.indoor', name: 'Indoor', members: [L, K] }, { entity: 'media_player.outdoor', name: 'Outdoor', members: [G] }],
+      presets: [{ name: 'Dinner', members: [L, K], volumes: { [L]: 35, [K]: 30 }, target: 'media_player.indoor' },
+        { name: 'Whole house', members: [L, K, G], volumes: { [L]: 40, [K]: 40, [G]: 60 }, target: 'media_player.indoor' }],
+    } : {};
     if (params.get('recents') === '1' && !localStorage.getItem('jukebox-card:recents:v1'))
       localStorage.setItem('jukebox-card:recents:v1', JSON.stringify(['Miles Davis', 'Abbey Road', 'Jazz FM', 'Eagles', 'Fleetwood']));
     const card = document.createElement('jukebox-card');
@@ -55,6 +65,7 @@
       default_tab: params.get('tab') || 'now',
       ...(params.get('backdrop') ? { backdrop: params.get('backdrop') } : {}),
       font_base: '../dist/fonts',
+      ...spk,
       ...extra,
     });
     card.hass = hass;

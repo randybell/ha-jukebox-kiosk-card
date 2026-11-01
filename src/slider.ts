@@ -4,12 +4,14 @@ import { LitElement, html, css } from 'lit';
  * Touch slider without any <input>, so nothing can take focus or raise the OS keyboard.
  * Emits `jb-input` (every move, detail.value 0..1) and `jb-change` (release, final value).
  * The visual value follows the finger immediately (optimistic); consumers throttle service calls.
+ * `max` (0..1, optional) caps the drag (quiet hours) and draws a tick there; unset = no cap, nothing changes.
  */
 export class JbSlider extends LitElement {
-  static properties = { value: { type: Number }, disabled: { type: Boolean, reflect: true }, label: {}, _drag: { state: true }, _v: { state: true } };
+  static properties = { value: { type: Number }, disabled: { type: Boolean, reflect: true }, label: {}, max: { type: Number }, _drag: { state: true }, _v: { state: true } };
   value = 0;
   disabled = false;
   label = '';
+  max?: number;
   private _drag = false;
   private _v = 0;
   private _rect?: DOMRect;
@@ -20,7 +22,8 @@ export class JbSlider extends LitElement {
 
   private at(e: PointerEvent) {
     const r = this._rect ?? this.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width)));
+    const v = Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width)));
+    return typeof this.max === 'number' && this.max >= 0 ? Math.min(v, this.max) : v;
   }
   private emit(type: string) { this.dispatchEvent(new CustomEvent(type, { detail: { value: Math.round(this._v * 100) / 100 }, bubbles: true, composed: true })); }
   private down = (e: PointerEvent) => {
@@ -54,7 +57,8 @@ export class JbSlider extends LitElement {
   }
   render() {
     const p = this.shown() * 100;
-    return html`<div class="t"><div class="f" style="width:${p}%"></div></div><div class="k ${this._drag ? 'on' : ''}" style="left:${p}%"></div>`;
+    const cap = typeof this.max === 'number' && this.max >= 0 && this.max < 1 ? html`<div class="cap" style="left:${this.max * 100}%"></div>` : '';
+    return html`<div class="t"><div class="f" style="width:${p}%"></div></div>${cap}<div class="k ${this._drag ? 'on' : ''}" style="left:${p}%"></div>`;
   }
   static styles = css`
     :host { position: relative; display: block; height: var(--jb-slider-hit, 36px); touch-action: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -63,6 +67,7 @@ export class JbSlider extends LitElement {
     .f { position: absolute; inset: 0 auto 0 0; background: var(--_active, #fff); border-radius: 99px; }
     .k { position: absolute; top: 50%; width: var(--jb-slider-knob, 18px); height: var(--jb-slider-knob, 18px); border-radius: 50%; background: var(--_active, #fff);
       transform: translate(-50%, -50%); box-shadow: 0 2px 8px #0008; transition: box-shadow .12s; }
+    .cap { position: absolute; top: 50%; width: 2px; height: calc(var(--jb-slider-h, 6px) + 12px); margin-left: -1px; transform: translateY(-50%); background: var(--_inactive, #ffffff73); border-radius: 1px; pointer-events: none; }
     .k.on { box-shadow: var(--_thumb-ring, 0 0 0 4px #ffffff2e), 0 2px 8px #0008; }
   `;
 }

@@ -9,8 +9,16 @@ import './lyrics/lyrics-view';
 import type { LyricsStore } from './lyrics/store';
 import type { QueueModel, QueueSnapshot } from './queue-model';
 import type { HassEntity, HomeAssistant, JukeboxCardConfig } from './types';
+import { volumeCap, canVolume, capVol } from './speakers/model';
 
 const VOL_THROTTLE_MS = 200;
+/** dynamic mode: what a room plays when it is not part of the current target ('' when it is, or idle) */
+export function roomElsewhere(hass: HomeAssistant | undefined, target: string, room: string): string {
+  const r = hass?.states[room], t = hass?.states[target];
+  if (!r || !['playing', 'paused'].includes(r.state) || !r.attributes?.media_title) return '';
+  const inT = ['playing', 'paused', 'buffering'].includes(t?.state ?? '') && Array.isArray(t?.attributes?.group_members) && t!.attributes.group_members.includes(room);
+  return inT ? '' : `${r.state === 'paused' ? 'Paused: ' : ''}${r.attributes.media_title}`;
+}
 const HOLD_MS = 4000; // keep optimistic values this long unless the entity confirms sooner
 const REPEAT_NEXT: Record<string, string> = { off: 'all', all: 'one', one: 'off' };
 
@@ -90,6 +98,12 @@ export class JbNow extends LitElement {
   private isPlaying() { return this.flag('state', this.ent?.state) === 'playing'; }
   playPause() {
     const playing = this.isPlaying();
+    // dynamic speakers: starting an idle group may take speakers from other groups; the card asks first (fixed mode: no guard)
+    const guard = this.config._guard;
+    if (!playing && guard && !['playing', 'paused'].includes(this.ent?.state ?? '')) { void guard(this.eid).then((ok) => { if (ok) this.doPlayPause(false); }); return; }
+    this.doPlayPause(playing);
+  }
+  private doPlayPause(playing: boolean) {
     this.flags.set('state', { v: playing ? 'paused' : 'playing', t: Date.now() }); this.requestUpdate();
     this.call('media_player', playing ? 'media_pause' : 'media_play', {}, this.eid);
   }
@@ -158,14 +172,16 @@ export class JbNow extends LitElement {
     }
     return s;
   }
+  /** quiet-hours cap for this user (undefined = none) */
+  private cap() { return volumeCap(this.config, this.hass?.user); }
   private onVolInput(id: string, e: CustomEvent) {
-    const v = e.detail.value;
+    const v = capVol(e.detail.value, this.cap());
     this.vol.set(id, { v, t: Date.now() });
     this.setVolLabel(id, v);
     this.sender(id)(v);
   }
   private onVolChange(id: string, e: CustomEvent) {
-    const v = e.detail.value;
+    const v = capVol(e.detail.value, this.cap());
     this.vol.set(id, { v, t: Date.now() });
     this.sender(id).flush(v); // always send the final value on release
     this.requestUpdate();
@@ -184,14 +200,16 @@ export class JbNow extends LitElement {
   private volRow(id: string, name: string, main: boolean) {
     const st = this.hass?.states[id];
     const off = !st || st.state === 'unavailable' || st.state === 'off';
+    const ro = !canVolume(this.config, this.hass?.user);
     const muted = this.mutedOf(id);
     const v = this.volOf(id);
     const ic = muted ? 'volmute' : main ? 'vol' : 'speaker';
+    const elsewhere = !main && this.config.speaker_mode === 'dynamic' ? roomElsewhere(this.hass, this.eid, id) : '';
     return html`<div class="vr ${main ? 'main' : 'room'} ${muted ? 'muted' : ''} ${off ? 'off' : ''}" data-entity=${id}>
-      <button class="vm" tabindex="-1" aria-label="${muted ? 'Unmute' : 'Mute'} ${name}" ?disabled=${off}
+      <button class="vm" tabindex="-1" aria-label="${muted ? 'Unmute' : 'Mute'} ${name}" ?disabled=${off || ro}
         @pointerdown=${noFocus} @click=${() => this.toggleMute(id)}>${icon(ic)}</button>
-      <span class="vn">${name}${off ? html` <i>offline</i>` : nothing}</span>
-      <jb-slider class="vs" .value=${muted ? 0 : v} ?disabled=${off} .label=${`${name} volume`}
+      <span class="vn">${name}${off ? html` <i>offline</i>` : nothing}${elsewhere ? html`<small class="else">${elsewhere}</small>` : nothing}</span>
+      <jb-slider class="vs" .value=${muted ? 0 : v} .max=${this.cap()} ?disabled=${off || ro} .label=${`${name} volume`}
         @jb-input=${(e: CustomEvent) => this.onVolInput(id, e)} @jb-change=${(e: CustomEvent) => this.onVolChange(id, e)}></jb-slider>
       <span class="vv" data-v=${muted ? '–' : String(Math.round(v * 100))}></span>
     </div>`;
@@ -328,6 +346,13 @@ export class JbNow extends LitElement {
     .vn i { font-style: normal; font-size: 11px; color: var(--_inactive); }
     .vv { font-size: 12px; color: var(--_muted); text-align: right; font-variant-numeric: tabular-nums; }
     .vr.off { opacity: .5; }
+    .vn .else { display: block; font-size: 11px; font-weight: 500; color: var(--_muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* large_buttons */
+    :host([large]) .tb { width: 68px; height: 68px; } :host([large]) .tb .i { width: 34px; height: 34px; }
+    :host([large]) .tb.pp { width: 96px; height: 96px; } :host([large]) .tb.pp .i { width: 44px; height: 44px; }
+    :host([large]) .vr { min-height: 60px; } :host([large]) .vm { width: 48px; height: 48px; } :host([large]) .vm .i { width: 26px; height: 26px; }
+    :host([large]) .vn { font-size: 17px; } :host([large]) .vs { --jb-slider-h: 10px; --jb-slider-knob: 30px; --jb-slider-hit: 52px; }
+    :host([large]) .ab { width: 52px; height: 52px; } :host([large]) .upn { height: 56px; } :host([large]) .upn b { font-size: 16px; }
     .vr.muted .vs { opacity: .45; }
     @container vol (min-width: 600px) {
       .rooms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 20px; padding-top: 8px; }

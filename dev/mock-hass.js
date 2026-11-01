@@ -24,6 +24,12 @@
 // The mock lyrics are INVENTED placeholder text (see dev/fixtures/ma-lyrics-sample.json), never real song lyrics.
 // 'So What' = synced via metadata/get_track_lyrics, 'Teardrop' = synced in item metadata, 'Dreams' = plain, the rest = none.
 // music_assistant.search with `artist` / `album`: MA prefixes the query ("artist - name"); the mock keeps only items by that artist.
+// Speakers (0.5.0): dev/mock-ma.js adds media_player.indoor / media_player.outdoor (dynamic MA groups, each with its own queue)
+// and the players/*, player_queues/* and config/players/* send_command calls (logged in __maLog; writes also in __calls). See mock-ma.js for params.
+// admin=1 (the user is an admin), user=<name>, uid=<user id>.
+// HA media_player.join / unjoin throw (their ids don't match MA's speakers; the card must use MA set_members).
+
+import { createMa } from './mock-ma.js';
 
 const params = new URLSearchParams(location.search);
 export const mock = (window.__mock = {
@@ -204,16 +210,22 @@ export const Q = (window.__queue = {
   items: params.get('idle') === '1' ? [] : [libTracks.find((t) => t.name === 'Mockingbird Lane'), ...startList.map((n) => libTracks.find((t) => t.name === n))].map(qItem),
   index: params.get('idle') === '1' ? -1 : 1,
 });
+/** one queue per MA group entity (Everywhere's is Q / window.__queue; mock-ma adds Indoor and Outdoor) */
+const QS = (window.__queues = { 'media_player.everywhere': Q });
+const qOf = (id) => QS[id];
 const qPub = (q) => ({ queue_item_id: q.queue_item_id, media_title: q._t.name, media_album_name: q._t.album?.name ?? '', media_artist: (q._t.artists ?? []).map((a) => a.name).join(', '),
   media_content_id: q._t.uri, media_image: q._t.image, favorite: !!q._t.favorite });
 
 const states = {};
 const st = (id) => states[id];
+let afterGroupState = null; // set once the MA mock exists: re-derives a group entity's attributes (live active_queue) after a state change
 function setState(id, state, attrs) {
   const old = states[id];
   states[id] = { entity_id: id, state: state ?? old.state, attributes: { ...(old?.attributes ?? {}), ...(attrs ?? {}) }, last_changed: new Date().toISOString(), last_updated: new Date().toISOString(), context: { id: 'mock' } };
+  if (state && old && state !== old.state && afterGroupState) afterGroupState(id);
 }
-function syncNowPlaying(resetPos = true) {
+function syncNowPlaying(resetPos = true, EVERY = 'media_player.everywhere') {
+  const Q = qOf(EVERY);
   const cur = Q.items[Q.index];
   const e = st(EVERY);
   if (!cur) { setState(EVERY, 'idle', { media_title: undefined, media_artist: undefined, media_album_name: undefined, media_content_id: undefined, entity_picture: undefined, entity_picture_local: undefined, media_duration: undefined, media_position: undefined }); return; }
@@ -231,13 +243,15 @@ function syncNowPlaying(resetPos = true) {
 }
 setState(EVERY, params.get('idle') === '1' ? 'idle' : params.get('paused') === '1' ? 'paused' : 'playing', {
   friendly_name: 'Everywhere', group_members: Object.keys(ROOMS), app_id: 'music_assistant', active_queue: 'syncgroup_everywhere',
-  volume_level: 0.55, is_volume_muted: false, shuffle: false, repeat: 'off', supported_features: 4127295, mass_player_type: 'group',
+  volume_level: 0.55, is_volume_muted: false, shuffle: false, repeat: 'off', supported_features: 4127295, mass_player_type: 'group', mass_player_id: null,
 });
 syncNowPlaying();
 if (st(EVERY).state !== 'idle') setState(EVERY, null, { media_position: 128, media_position_updated_at: new Date(Date.now() - 2000).toISOString() });
 for (const [id, [name, v]] of Object.entries(ROOMS))
-  setState(id, st(EVERY).state === 'idle' ? 'idle' : 'playing', { friendly_name: name, volume_level: v, is_volume_muted: false, source: 'Music Assistant', supported_features: 152463 });
+  setState(id, st(EVERY).state === 'idle' ? 'idle' : 'playing', { friendly_name: name, volume_level: v, is_volume_muted: false, source: 'Music Assistant', supported_features: 152463, mass_player_id: null });
 setState('button.everywhere_favorite_current_song', 'unknown', { friendly_name: 'Everywhere Favorite current song' });
+const ma = createMa({ params, st, setState, commit: () => commit(), sleep, QS, syncNowPlaying, EVERY, libTracks, qItem });
+afterGroupState = (id) => ma.groupStateChanged(id);
 
 const listeners = new Set();
 export const onHass = (fn) => listeners.add(fn);
@@ -267,7 +281,8 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
   const call = { t: Math.round(performance.now()), domain, service, data: structuredClone(data), target: target ? structuredClone(target) : undefined, returnResponse: !!returnResponse };
   // read-only lyrics fetches go to their own log so the user-action log (__calls) stays exactly as before 0.4.0
   const lyr = domain === 'mass_queue' && service === 'send_command';
-  (lyr ? window.__lyricsLog : window.__calls).push(call);
+  const maCmd = lyr && /^(players|player_queues|config\/players)\//.test(String(data.command ?? ''));
+  if (!maCmd) (lyr ? window.__lyricsLog : window.__calls).push(call);
   const ctx = { id: 'mock-' + (window.__calls.length + window.__lyricsLog.length) };
   const needResp = () => { if (!returnResponse) throw new Error(`${domain}.${service} needs return_response`); };
   if (domain === 'music_assistant' && service === 'search') {
@@ -286,6 +301,7 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     if (LYRFAIL === 'perm') throw Object.assign(new Error('Unauthorized'), { code: 'unauthorized' });
     if (LYRFAIL === 'err') throw new Error('mass_queue.send_command: provider unavailable');
     if (data.config_entry_id !== MQ_ENTRY) throw new Error(`Config entry ${data.config_entry_id} not found`);
+    if (maCmd) return { context: ctx, response: { response: await ma.command(data.command, data.data ?? {}) } };
     return { context: ctx, response: { response: sendCommand(data.command, data.data ?? {}) } };
   }
   const slow = domain === 'mass_queue' && MQSLOW && String(data.uri ?? '').toLowerCase().includes(MQSLOW) || (domain === 'mass_queue' && MQSLOW && (byUri(data.uri)?.name ?? '').toLowerCase().includes(MQSLOW));
@@ -299,16 +315,18 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     needResp();
     if (mock.failQueue) throw new Error('queue unavailable');
     const id = ids(target)[0];
-    if (id !== EVERY) throw new Error(`${id} is not a Music Assistant player`);
+    if (!qOf(id)) throw new Error(`${id} is not a Music Assistant player`);
+    const Q = qOf(id), E = st(id);
     const cur = Q.items[Q.index];
-    return { context: ctx, response: { [id]: { queue_id: 'syncgroup_everywhere', active: true, name: 'Everywhere', items: Q.items.length, shuffle_enabled: !!st(EVERY).attributes.shuffle,
-      repeat_mode: st(EVERY).attributes.repeat, current_index: Q.index < 0 ? null : Q.index, elapsed_time: Math.round(posNow(st(EVERY).attributes, st(EVERY).state)),
+    return { context: ctx, response: { [id]: { queue_id: E.attributes.active_queue, active: true, name: E.attributes.friendly_name, items: Q.items.length, shuffle_enabled: !!E.attributes.shuffle,
+      repeat_mode: E.attributes.repeat, current_index: Q.index < 0 ? null : Q.index, elapsed_time: Math.round(posNow(E.attributes, E.state)),
       current_item: cur ? { queue_item_id: cur.queue_item_id, name: cur._t.name, duration: cur._t._duration, media_item: pub(cur._t) } : null,
       next_item: Q.items[Q.index + 1] ? { queue_item_id: Q.items[Q.index + 1].queue_item_id, name: Q.items[Q.index + 1]._t.name } : null } } };
   }
   if (domain === 'music_assistant' && service === 'play_media') {
     const id = ids(target);
-    if (id.length !== 1 || id[0] !== EVERY) throw new Error(`play_media: ${id.join(',')} is not a Music Assistant player (only ${EVERY})`);
+    if (id.length !== 1 || !qOf(id[0])) throw new Error(`play_media: ${id.join(',')} is not a Music Assistant player (only ${Object.keys(QS).join(', ')})`);
+    const EVERY = id[0], Q = qOf(EVERY);
     if (!['play', 'replace', 'next', 'replace_next', 'add', undefined].includes(data.enqueue)) throw new Error('invalid enqueue');
     // HA's MA schema: media_type is optional, one of these (MA infers the type from a full uri when it is omitted)
     if (!['artist', 'album', 'audiobook', 'folder', 'playlist', 'podcast', 'track', 'radio', undefined].includes(data.media_type)) throw new Error(`invalid media_type ${data.media_type}`);
@@ -321,9 +339,10 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     if (data.radio_mode) add = [...add, ...libTracks.filter((t) => !add.includes(t)).slice(0, 8)];
     const items = add.map(qItem);
     const at = Q.index + 1;
+    if (['play', 'replace', undefined].includes(data.enqueue) && ma.willPlay(EVERY)) ma.afterHa();
     switch (data.enqueue ?? 'play') {
-      case 'play': Q.items.splice(at, 0, ...items); Q.index = at; syncNowPlaying(); setState(EVERY, 'playing'); break;
-      case 'replace': Q.items = items; Q.index = 0; syncNowPlaying(); setState(EVERY, 'playing'); break;
+      case 'play': Q.items.splice(at, 0, ...items); Q.index = at; syncNowPlaying(true, EVERY); setState(EVERY, 'playing'); break;
+      case 'replace': Q.items = items; Q.index = 0; syncNowPlaying(true, EVERY); setState(EVERY, 'playing'); break;
       case 'next': Q.items.splice(at, 0, ...items); break;
       case 'replace_next': Q.items.splice(at, Q.items.length, ...items); break;
       case 'add': Q.items.push(...items); break;
@@ -331,6 +350,8 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     commit();
     return { context: ctx };
   }
+  if (domain === 'media_player' && (service === 'join' || service === 'unjoin'))
+    throw new Error(`media_player.${service}: HA group member ids don't match Music Assistant's speakers; use players/cmd/set_members`);
   if (domain === 'media_player') {
     const tg = ids(target);
     if (!tg.length) throw new Error('no target');
@@ -340,11 +361,11 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
       switch (service) {
         case 'volume_set': setState(id, null, { volume_level: Math.max(0, Math.min(1, +data.volume_level)) }); break;
         case 'volume_mute': setState(id, null, { is_volume_muted: !!data.is_volume_muted }); break;
-        case 'media_play': setState(id, 'playing', { media_position: posNow(a, e.state), media_position_updated_at: new Date().toISOString() }); break;
+        case 'media_play': if (ma.willPlay(id)) ma.afterHa(); setState(id, 'playing', { media_position: posNow(a, e.state), media_position_updated_at: new Date().toISOString() }); break;
         case 'media_pause': setState(id, 'paused', { media_position: posNow(a, e.state), media_position_updated_at: new Date().toISOString() }); break;
         case 'media_play_pause': setState(id, e.state === 'playing' ? 'paused' : 'playing'); break;
-        case 'media_next_track': if (id === EVERY && Q.index < Q.items.length - 1) { Q.index++; syncNowPlaying(); } break;
-        case 'media_previous_track': if (id === EVERY) { if (posNow(a, e.state) < 3 && Q.index > 0) Q.index--; syncNowPlaying(); } break;
+        case 'media_next_track': { const Q = qOf(id); if (Q && Q.index < Q.items.length - 1) { Q.index++; syncNowPlaying(true, id); } break; }
+        case 'media_previous_track': { const Q = qOf(id); if (Q) { if (posNow(a, e.state) < 3 && Q.index > 0) Q.index--; syncNowPlaying(true, id); } break; }
         case 'media_seek': setState(id, null, { media_position: +data.seek_position, media_position_updated_at: new Date().toISOString() }); break;
         case 'shuffle_set': setState(id, null, { shuffle: !!data.shuffle }); break;
         case 'repeat_set': if (!['off', 'all', 'one'].includes(data.repeat)) throw new Error('bad repeat'); setState(id, null, { repeat: data.repeat }); break;
@@ -391,7 +412,8 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
       return { context: ctx, response: { tracks: all } };
     }
     const ent = data.entity;
-    if (ent !== EVERY) throw new Error(`mass_queue: ${ent} is not a Music Assistant player`);
+    if (!qOf(ent)) throw new Error(`mass_queue: ${ent} is not a Music Assistant player`);
+    const Q = qOf(ent);
     if (service === 'get_queue_items') {
       needResp();
       const lb = data.limit_before ?? 5, la = data.limit_after ?? 100;
@@ -402,8 +424,14 @@ async function callService(domain, service, data = {}, target, notifyOnError, re
     const i = Q.items.findIndex((q) => q.queue_item_id === data.queue_item_id);
     if (i < 0) throw new Error(`queue item ${data.queue_item_id} not found`);
     const move = (to) => { const [x] = Q.items.splice(i, 1); Q.items.splice(to, 0, x); };
+    // these mass_queue services call MA's move_item / delete_item: an item MA already buffered (after the playing one,
+    // up to index_in_buffer) can't move (500 "<n> is already played/buffered") and isn't deleted (200, ignored)
+    const bufEnd = Math.max(Q.index, typeof Q.buf === 'number' ? Q.buf : Q.index + (params.get('qbuf') === '1' ? 1 : 0));
+    const buffered = i > Q.index && i <= bufEnd;
+    if (buffered && /^move_queue_item_/.test(service)) throw new Error(`${i} is already played/buffered`);
+    if (buffered && service === 'remove_queue_item') { commit(); return { context: ctx }; }
     switch (service) {
-      case 'play_queue_item': Q.index = i; syncNowPlaying(); setState(EVERY, 'playing'); break;
+      case 'play_queue_item': Q.index = i; syncNowPlaying(true, ent); setState(ent, 'playing'); break;
       case 'move_queue_item_up': if (i > Q.index + 1) move(i - 1); break;
       case 'move_queue_item_down': if (i < Q.items.length - 1 && i > Q.index) move(i + 1); break;
       case 'move_queue_item_next': if (i !== Q.index) { const [x] = Q.items.splice(i, 1); if (i < Q.index) Q.index--; Q.items.splice(Q.index + 1, 0, x); } break;
@@ -478,8 +506,9 @@ window.__playTrack = (name, position = 60) => {
   window.__setNowPlaying({ artist: (t.artists ?? []).map((a) => a.name).join(', '), title: t.name, radio: false, uri: t.uri, duration: t._duration ?? 0, position });
 };
 
+const USER = { ...(params.get('uid') ? { id: params.get('uid') } : {}), name: params.get('user') ?? 'Kiosk', is_admin: params.get('admin') === '1' };
 function makeHass() {
-  return { states: { ...states }, user: { name: 'Kiosk', is_admin: false }, locale: { language: 'en-US' }, language: 'en-US', callService };
+  return { states: { ...states }, user: USER, locale: { language: 'en-US' }, language: 'en-US', callService };
 }
 export let hass = makeHass();
 window.__hass = hass;

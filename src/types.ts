@@ -10,7 +10,7 @@ export interface ServiceCallResponse<T = any> {
 }
 export interface HomeAssistant {
   states: Record<string, HassEntity>;
-  user?: { name?: string; is_admin?: boolean };
+  user?: { id?: string; name?: string; is_admin?: boolean };
   locale?: { language?: string };
   language?: string;
   callService(
@@ -23,7 +23,35 @@ export interface HomeAssistant {
   ): Promise<ServiceCallResponse | any>;
 }
 
-export interface RoomConfig { name?: string; entity: string; icon?: string }
+export interface RoomConfig {
+  name?: string; entity: string; icon?: string;
+  /** Music Assistant player id of this room's speaker (players/all `player_id`). Optional: matched by name when unset. */
+  ma_player?: string;
+}
+/** A player the card can play on in `speaker_mode: dynamic` (an MA group or a single MA player). */
+export interface TargetConfig {
+  entity: string; name?: string;
+  /** Room entities this group starts with (MA's own preset for a dynamic group is not readable). Used for takeover warnings. */
+  members?: string[];
+}
+/** A named room preset: these rooms play together, optionally at these volumes (percent). */
+export interface PresetConfig {
+  name: string;
+  /** Room entities (from `rooms`). */
+  members: string[];
+  /** Per-room volume in percent, keyed by room entity. */
+  volumes?: Record<string, number>;
+  /** Group to play on. Default: the current target. */
+  target?: string;
+}
+export interface QuietHours {
+  /** 'HH:MM' local time. start === end means all day. */
+  start: string; end: string;
+  /** Highest volume in percent while quiet hours are on. */
+  max_volume: number;
+  /** Who is capped. Default guests (everyone who may not group speakers). */
+  applies?: 'guests' | 'everyone';
+}
 export type TabId = 'now' | 'browse' | 'search' | 'queue' | 'lyrics';
 export type Enqueue = 'play' | 'next' | 'add' | 'replace' | 'replace_next';
 
@@ -76,6 +104,24 @@ export interface JukeboxCardConfig {
   library_only?: boolean;
   /** Clock and title */
   title?: string;
+  /** fixed (default): always play on `entity`, the Speakers panel is a volume mixer. dynamic: pick the target, group and move. */
+  speaker_mode?: 'fixed' | 'dynamic';
+  /** dynamic mode targets. Default: every media_player with a Music Assistant player type. */
+  targets?: Array<TargetConfig | string>;
+  /** Who may group, move and pick the target. Default admins. A UI lock, not security. */
+  grouping?: 'admins' | 'everyone' | 'nobody';
+  /** Extra users (name or user id) who may group. */
+  grouping_users?: string[];
+  /** What everyone else may do in the Speakers panel: volume (default) or none (read only). */
+  guest_access?: 'volume' | 'none';
+  /** Dropping the leader of a playing group: block (default) or allow (MA hands off; WiiM restarts the group after a gap). */
+  leader_drop?: 'block' | 'allow';
+  presets?: PresetConfig[];
+  quiet_hours?: QuietHours;
+  /** Bigger touch targets and text. Default false. */
+  large_buttons?: boolean;
+  /** @internal set by the card in dynamic mode only: resolves false when the user cancels a start that would take speakers */
+  _guard?: (entity: string) => Promise<boolean>;
 }
 
 /** One MA media item as returned by music_assistant.search (defensive: most fields optional). */

@@ -118,7 +118,11 @@ export async function playMedia(hass: HomeAssistant, config: JukeboxCardConfig, 
   const key = `${entity_id}|${it.uri}|${enqueue}|${radio ? 1 : 0}`;
   if (inflight.has(key)) return null;
   inflight.add(key);
-  try { await hass.callService('music_assistant', 'play_media', data, { entity_id }); }
+  try {
+    // dynamic speakers only (fixed mode has no guard): starting an idle group can take speakers from other groups, ask first
+    if (config._guard && (enqueue === 'play' || enqueue === 'replace') && !(await config._guard(entity_id))) return null;
+    await hass.callService('music_assistant', 'play_media', data, { entity_id });
+  }
   finally { inflight.delete(key); }
   return { data, entity_id };
 }
@@ -133,6 +137,7 @@ export async function shufflePlay(hass: HomeAssistant, config: JukeboxCardConfig
   if (inflight.has(key)) return null;
   inflight.add(key);
   try {
+    if (config._guard && !(await config._guard(entity_id))) return null;
     await hass.callService('media_player', 'shuffle_set', { shuffle: true }, { entity_id });
     const data = { media_id: it.uri, media_type: mediaType, enqueue };
     await hass.callService('music_assistant', 'play_media', data, { entity_id });
@@ -142,6 +147,7 @@ export async function shufflePlay(hass: HomeAssistant, config: JukeboxCardConfig
 /** "Play" from a detail view means in order: if the player is shuffling, turn shuffle off first (awaited). */
 export async function playInOrder(hass: HomeAssistant, config: JukeboxCardConfig, it: MaItem, mediaType: string, enqueue: Enqueue = 'replace') {
   const entity_id = config.entity || 'media_player.everywhere';
+  if (config._guard) { if (!(await config._guard(entity_id))) return null; config = { ...config, _guard: undefined }; }
   if (hass.states[entity_id]?.attributes?.shuffle === true && !isInflight(`${entity_id}|${it.uri}|${enqueue}|0`))
     await hass.callService('media_player', 'shuffle_set', { shuffle: false }, { entity_id });
   return playMedia(hass, config, it, mediaType, enqueue);
@@ -284,20 +290,22 @@ export function foldedActions(radio: boolean, ask: (a: RowAct) => void): MenuAct
 }
 
 /* ---------------- confirmation before anything that clears the shared queue ---------------- */
-export type ConfirmKind = 'replace' | 'radio' | 'play' | 'shuffle';
+export type ConfirmKind = 'replace' | 'radio' | 'play' | 'shuffle' | 'jump';
 export interface ConfirmState { kind: ConfirmKind; item: MaItem; run: () => void }
 const CONFIRM: Record<ConfirmKind, { q: (n: string) => string; body: string; ok: string; icon: string }> = {
   replace: { q: () => 'Replace the current queue?', body: 'This clears what\'s playing for everyone.', ok: 'Replace', icon: 'replace' },
   radio: { q: (n) => `Start radio from “${n}”?`, body: 'This replaces the current queue for everyone.', ok: 'Start radio', icon: 'tower' },
   play: { q: (n) => `Play “${n}” now?`, body: 'This replaces the current queue for everyone.', ok: 'Play', icon: 'play' },
   shuffle: { q: (n) => `Shuffle “${n}” now?`, body: 'This replaces the current queue for everyone.', ok: 'Shuffle', icon: 'shuffle' },
+  // queue-row Play now (0.5.0): jumps the shared queue, so it asks like Replace does
+  jump: { q: () => 'Play this now?', body: 'The current song will stop.', ok: 'Play now', icon: 'play' },
 };
 export function confirmTpl(c: ConfirmState | null, close: () => void) {
   if (!c) return nothing;
   const t = CONFIRM[c.kind];
   return html`<div class="scrim dim" @pointerdown=${(e: PointerEvent) => { e.preventDefault(); close(); }}></div>
     <div class="confirm" role="alertdialog" aria-modal="true" aria-labelledby="cf-q" aria-describedby="cf-b" data-kind=${c.kind}>
-      <div class="cf-h">${artTpl(c.item, 'th')}<span><b id="cf-q">${t.q(c.item.name)}</b><small>${c.kind === 'replace' ? c.item.name : ''}</small></span></div>
+      <div class="cf-h">${artTpl(c.item, 'th')}<span><b id="cf-q">${t.q(c.item.name)}</b><small>${c.kind === 'replace' || c.kind === 'jump' ? c.item.name : ''}</small></span></div>
       <p id="cf-b">${t.body}</p>
       <div class="cf-a">
         <button class="cbtn" data-action="cancel" tabindex="-1" @pointerdown=${noFocus} @click=${close}>Cancel</button>
@@ -329,7 +337,7 @@ export const mediaStyles = css`
   .mi:active { background: #ffffff1f; }
   .mi .i { width: 22px; height: 22px; }
   .mi.cancel { color: var(--_inactive); border-top: 1px solid var(--_divider); border-radius: 0 0 9px 9px; margin-top: 4px; }
-  .menu.sheet { left: 0; right: 0; bottom: 0; width: auto; border-radius: 20px 20px 0 0; padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); }
+  .menu.sheet { left: 0; right: 0; bottom: 0; width: auto; border-radius: 20px 20px 0 0; padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); max-height: 100%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
   .menu.sheet .mh { display: flex; align-items: center; gap: 12px; text-transform: none; letter-spacing: 0; padding: 6px 6px 12px; border-bottom: 1px solid var(--_divider); margin-bottom: 6px; }
   .menu.sheet .mh span { display: flex; flex-direction: column; min-width: 0; }
   .menu.sheet .mh b { color: #fff; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -386,4 +394,11 @@ export const mediaStyles = css`
   .eyebrow { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
   .empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; color: var(--_muted); font-size: 14px; padding: 24px; }
   .empty b { color: var(--_fg); font-family: var(--_font-display); font-size: 18px; }
+  /* large_buttons: the card sets the large attribute on every view */
+  :host([large]) .row { min-height: 72px; }
+  :host([large]) .rt b { font-size: 17px; } :host([large]) .rt small { font-size: 14px; }
+  :host([large]) .ra-b { width: 52px; height: 52px; } :host([large]) .ra-b .i { width: 28px; height: 28px; }
+  :host([large]) .cbtn { height: 60px; font-size: 17px; min-width: 128px; }
+  :host([large]) .mi, :host([large]) .menu.sheet .mi { height: 60px; font-size: 17px; }
+  :host([large]) .toast { font-size: 16px; padding: 14px 20px; }
 `;

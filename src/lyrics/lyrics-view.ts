@@ -1,5 +1,4 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
-import { keyed } from 'lit/directives/keyed.js';
 import { tokens, base } from '../styles';
 import { icon } from '../icons';
 import { fmtTime, prefersReducedMotionSafe } from './util';
@@ -22,6 +21,8 @@ export const MSG = { loading: 'Looking for lyrics…', none: 'No lyrics found', 
  * + lyrics_offset_ms). A timer is set for the next line's timestamp; there is no per-frame loop.
  * Long-press a synced line (not on radio, only when the player can seek) to jump there. A plain tap does nothing.
  * Plain lyrics scroll gently in proportion to the track progress; touching or scrolling them pauses that for a few seconds.
+ * Lines always move UP as the song advances: a ResizeObserver re-centres instantly when the layout changes (fonts, Stage,
+ * fit, rotation), so the next smooth scroll never has to go backwards. The screensaver slides a column of lines (transform only).
  * Lyrics are rendered as text, never as HTML.
  */
 export class JbLyrics extends LitElement {
@@ -50,6 +51,10 @@ export class JbLyrics extends LitElement {
   private _lastCur = -2;
   private _lastLines?: unknown;
   private _seekHold?: { v: number; t: number; upd?: string };
+  private _ro?: ResizeObserver;
+  private _roEls: Element[] = [];
+  /** screensaver column offset (px) last applied */
+  private _svY?: number;
   /** index of the highlighted line at the last render (tests read data-cur) */
   cur = -1;
 
@@ -64,6 +69,7 @@ export class JbLyrics extends LitElement {
     super.disconnectedCallback();
     this._unsub?.(); this._unsub = undefined;
     window.clearTimeout(this._timer); window.clearTimeout(this._holdTimer); window.clearTimeout(this._chipTimer);
+    this._ro?.disconnect(); this._roEls = []; this._svY = undefined;
   }
   protected willUpdate(ch: PropertyValues) {
     if (ch.has('store')) { this._unsub?.(); this._unsub = this.isConnected ? this.store?.subscribe((s) => (this._s = s)) : undefined; }
@@ -151,38 +157,97 @@ export class JbLyrics extends LitElement {
     const s = this._s;
     this.dataset.status = s.status;
     this.dataset.cur = String(this.cur);
+    this.observeSize();
     if (!this.active || (s.status !== 'synced' && s.status !== 'plain')) return;
-    const sc = this.renderRoot.querySelector('.sc') as HTMLElement | null;
     const linesChanged = this._lastLines !== s.lines;
     this._lastLines = s.lines;
-    if (s.status === 'synced') {
-      if (sc && (this.cur !== this._lastCur || linesChanged) && Date.now() - this._userAt > USER_SCROLL_HOLD_MS) this.center(sc, linesChanged);
-      this._lastCur = this.cur;
-      if (this.playing()) {
-        const nxt = s.lines[this.cur + 1];
-        if (nxt) {
-          const ms = (nxt.t - (this.position() + this.offset())) * 1000 + 30;
-          this._timer = window.setTimeout(() => this.requestUpdate(), Math.max(60, Math.min(15_000, ms)));
-        }
-      }
-    } else {
-      if (sc) this.plainScroll(sc, linesChanged);
-      if (this.playing()) this._timer = window.setTimeout(() => this.updated(), 2000);
+    if (this.mode === 'saver') this.slideSaver(linesChanged);
+    else {
+      const sc = this.renderRoot.querySelector('.sc') as HTMLElement | null;
+      if (s.status === 'synced') {
+        if (sc && (this.cur !== this._lastCur || linesChanged) && Date.now() - this._userAt > USER_SCROLL_HOLD_MS) this.center(sc, linesChanged, this.cur > this._lastCur);
+      } else if (sc) this.plainScroll(sc, linesChanged);
     }
+    this._lastCur = this.cur;
+    if (!this.playing()) return;
+    if (s.status === 'synced') {
+      const nxt = s.lines[this.cur + 1];
+      if (nxt) {
+        const ms = (nxt.t - (this.position() + this.offset())) * 1000 + 30;
+        this._timer = window.setTimeout(() => this.requestUpdate(), Math.max(60, Math.min(15_000, ms)));
+      }
+    } else this._timer = window.setTimeout(() => this.updated(), 2000);
   }
-  private center(sc: HTMLElement, jump: boolean) {
+  /** Watch the scroller and the lines for size changes. A layout change (fonts loading, the Stage opening, fit, rotation,
+   *  the overlay resizing) moves every line; re-centre at once (no animation) so the next line change scrolls forward
+   *  from the right place instead of sliding back down from a stale scroll position. */
+  private observeSize() {
+    const els = [...this.renderRoot.querySelectorAll('.sc, .sc > .col, .win, .win > .col')];
+    if (els.length === this._roEls.length && els.every((e, i) => e === this._roEls[i])) return;
+    if (typeof ResizeObserver === 'undefined') return;
+    this._ro ??= new ResizeObserver(() => this.onResize());
+    this._ro.disconnect();
+    this._roEls = els;
+    els.forEach((e) => this._ro!.observe(e));
+  }
+  private onResize() {
+    const s = this._s;
+    if (!this.active || (s.status !== 'synced' && s.status !== 'plain')) return;
+    if (this.mode === 'saver') { this.slideSaver(true); return; }
+    const sc = this.renderRoot.querySelector('.sc') as HTMLElement | null;
+    if (!sc) return;
+    if (s.status === 'synced') { if (Date.now() - this._userAt > USER_SCROLL_HOLD_MS) this.center(sc, true); }
+    else this.plainScroll(sc, true);
+  }
+  private center(sc: HTMLElement, jump: boolean, forward = false) {
     const el = sc.querySelector(`.ln[data-i="${Math.max(0, this.cur)}"]`) as HTMLElement | null;
     if (!el) return;
-    const top = el.offsetTop - (sc.clientHeight - el.offsetHeight) / 2;
-    sc.scrollTo({ top: Math.max(0, top), behavior: jump || prefersReducedMotionSafe() ? 'auto' : 'smooth' });
+    const top = Math.max(0, el.offsetTop - (sc.clientHeight - el.offsetHeight) / 2);
+    // the song moved forward but the target is above us (a stale position): never animate the lines downwards, jump instead
+    if (forward && top < sc.scrollTop - 1) jump = true;
+    sc.scrollTo({ top, behavior: jump || prefersReducedMotionSafe() ? 'auto' : 'smooth' });
   }
   private plainScroll(sc: HTMLElement, jump: boolean) {
     if (Date.now() - this._userAt < USER_SCROLL_HOLD_MS * 1.5) return;
     const dur = Number(this.ent?.attributes?.media_duration) || this._s.track?.duration || 0;
     const max = sc.scrollHeight - sc.clientHeight;
     if (!dur || max <= 0) return;
-    const frac = Math.max(0, Math.min(1, (this.position() - 10) / Math.max(1, dur - 30)));
-    sc.scrollTo({ top: Math.round(frac * max), behavior: jump || prefersReducedMotionSafe() ? 'auto' : 'smooth' });
+    const top = Math.round(this.plainFrac(dur) * max);
+    sc.scrollTo({ top, behavior: jump || top < sc.scrollTop - 1 || prefersReducedMotionSafe() ? 'auto' : 'smooth' });
+  }
+  /** how far through plain (untimed) lyrics we are: 0 for the first 10 s, 1 for the last 20 s */
+  private plainFrac(dur: number) { return Math.max(0, Math.min(1, (this.position() - 10) / Math.max(1, dur - 30))); }
+  /** Screensaver: a column of lines inside a clipped window, moved with a transform transition (no scrolling, no layout
+   *  per frame). Synced: the current line sits in the middle slot, so on each line change the old line slides up into the
+   *  "past" slot and the next one slides up from the bottom. Plain: the column steps up one line at a time with progress.
+   *  Going backwards (a seek back, a new track) jumps instead of sliding down. */
+  private slideSaver(jump: boolean) {
+    const win = this.renderRoot.querySelector('.win') as HTMLElement | null;
+    const col = win?.querySelector('.col') as HTMLElement | null;
+    if (!win || !col) return;
+    const rows = col.children as HTMLCollectionOf<HTMLElement>;
+    if (!rows.length) return;
+    let y = 0;
+    if (this._s.status === 'synced') {
+      const el = col.querySelector(`.ln[data-i="${this.cur}"]`) as HTMLElement | null;
+      const pitch = rows.length > 1 ? rows[1].offsetTop - rows[0].offsetTop : rows[0].offsetHeight;
+      if (el) y = el.offsetTop - pitch;
+    } else {
+      const dur = Number(this.ent?.attributes?.media_duration) || this._s.track?.duration || 0;
+      const max = col.offsetHeight - win.clientHeight;
+      if (dur && max > 0) {
+        const k = Math.min(rows.length - 1, Math.floor(this.plainFrac(dur) * rows.length));
+        y = Math.max(0, Math.min(max, rows[k].offsetTop - Math.round(win.clientHeight / 3)));
+      }
+    }
+    y = Math.round(y);
+    if (y === this._svY && !jump) return;
+    const instant = jump || this._svY === undefined || y < this._svY || prefersReducedMotionSafe();
+    if (instant) col.classList.add('jump');
+    col.style.transform = `translate3d(0, ${-y}px, 0)`;
+    if (instant) { void col.offsetHeight; col.classList.remove('jump'); }
+    this._svY = y;
+    col.dataset.y = String(y);
   }
 
   // ---------- render ----------
@@ -216,10 +281,10 @@ export class JbLyrics extends LitElement {
       default: {
         const seek = this.seekable();
         body = html`<div class="sc ${synced ? 'synced' : 'plain'} ${seek ? 'seekable' : ''}" @wheel=${this.onUserScroll} @touchmove=${this.onUserScroll} @keydown=${this.onUserScroll}>
-          <div class="pad"></div>
+          <div class="pad"></div><div class="col">
           ${s.lines.map((l, i) => html`<p class="ln ${i === this.cur ? 'cur' : i < this.cur ? 'past' : ''} ${i === this._press ? 'press' : ''} ${i === this._flash ? 'flash' : ''} ${l.text ? '' : 'gap'}"
             data-i=${i} data-t=${synced ? l.t : nothing}>${l.text || (synced ? '♪' : '\u00a0')}</p>`)}
-          <div class="pad"></div>
+          </div><div class="pad"></div>
         </div>`;
       }
     }
@@ -235,12 +300,12 @@ export class JbLyrics extends LitElement {
     const s = this._s;
     if (s.status === 'synced') {
       const i = this.cur;
-      const at = (k: number) => (k >= 0 && k < s.lines.length ? s.lines[k].text || '♪' : '');
-      return html`<div class="ly m-saver st-synced">${keyed(i, html`<div class="three">
-        <p class="ln past">${at(i - 1)}</p><p class="ln cur">${i < 0 ? '♪' : at(i)}</p><p class="ln">${at(i + 1)}</p></div>`)}</div>`;
+      return html`<div class="ly m-saver st-synced"><div class="win"><div class="col">
+        <p class="ln intro ${i < 0 ? 'cur' : 'past'}" data-i="-1">♪</p>
+        ${s.lines.map((l, k) => html`<p class="ln ${k === i ? 'cur' : k < i ? 'past' : ''}" data-i=${k}>${l.text || '♪'}</p>`)}</div></div></div>`;
     }
     if (s.status === 'plain')
-      return html`<div class="ly m-saver st-plain"><div class="sc plain">${s.lines.map((l, i) => html`<p class="ln ${l.text ? '' : 'gap'}" data-i=${i}>${l.text || ' '}</p>`)}</div></div>`;
+      return html`<div class="ly m-saver st-plain"><div class="win"><div class="col">${s.lines.map((l, i) => html`<p class="ln ${l.text ? '' : 'gap'}" data-i=${i}>${l.text || '\u00a0'}</p>`)}</div></div></div>`;
     return nothing;
   }
 
@@ -248,7 +313,7 @@ export class JbLyrics extends LitElement {
     :host { display: block; min-height: 0; color: #fff; font-family: var(--_font-body); }
     :host(:not([mode=saver])) { height: 100%; }
     .ly { position: relative; height: 100%; min-height: 0; display: flex; flex-direction: column; }
-    .sc { position: relative; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+    .sc { position: relative; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; overflow-anchor: none; -webkit-overflow-scrolling: touch;
       -webkit-mask-image: linear-gradient(transparent 0, #000 16%, #000 84%, transparent 100%); mask-image: linear-gradient(transparent 0, #000 16%, #000 84%, transparent 100%); }
     .sc::-webkit-scrollbar { display: none; }
     .pad { height: 42%; }
@@ -297,17 +362,23 @@ export class JbLyrics extends LitElement {
     .m-stage .plain .ln { font-size: clamp(20px, 2.8vw, 38px); }
     .m-stage .chip.fl { top: 4px; left: 0; }
 
+    /* screensaver: a clipped window over a column that slides up (transform only); --jb-ly-slide is 0ms under reduced motion */
     .m-saver { height: auto; }
-    .m-saver .three { display: flex; flex-direction: column; gap: 4px; animation: svl 700ms ease both; }
-    .m-saver .ln { font-size: clamp(18px, 2.6cqw, 34px); text-shadow: 0 2px 24px #000c; padding: 0; min-height: 1.25em;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .m-saver .ln.cur { color: #fff; font-size: clamp(22px, 3.4cqw, 46px); }
-    .m-saver .ln.past { color: rgba(255, 255, 255, .4); }
-    .m-saver .sc.plain { height: 7.5em; font-size: clamp(16px, 2.2cqw, 28px); -webkit-mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent);
-      mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent); overflow: hidden; }
-    .m-saver .plain .ln { font-size: 1em; color: rgba(255, 255, 255, .8); white-space: normal; }
-    @keyframes svl { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
-    @media (prefers-reduced-motion: reduce) { .ln, .m-saver .three { transition: none; animation: none; } }
+    .m-saver .win { position: relative; overflow: hidden; }
+    .m-saver .col { position: relative; transition: transform var(--jb-ly-slide, 650ms) cubic-bezier(.22, .8, .24, 1); }
+    .m-saver .col.jump, .m-saver .col.jump .ln { transition: none; }
+    .m-saver.st-synced .win { height: 5.25em; font-size: clamp(18px, 2.6cqw, 34px);
+      -webkit-mask-image: linear-gradient(transparent 0, #000 12%, #000 88%, transparent 100%); mask-image: linear-gradient(transparent 0, #000 12%, #000 88%, transparent 100%); }
+    .m-saver.st-synced .ln { font-size: 1em; height: 1.75em; line-height: 1.75em; padding: 0; width: 74%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      text-wrap: nowrap; text-shadow: 0 2px 24px #000c; transform-origin: left center;
+      transition: color var(--jb-ly-slide, 650ms) ease, transform var(--jb-ly-slide, 650ms) cubic-bezier(.22, .8, .24, 1); }
+    /* the current line is bigger by scale, not font-size, so every row keeps the same height and the slide stays one row */
+    .m-saver.st-synced .ln.cur { color: #fff; transform: scale(1.35); }
+    .m-saver.st-synced .ln.past { color: rgba(255, 255, 255, .4); }
+    .m-saver.st-plain .win { height: 7.5em; font-size: clamp(16px, 2.2cqw, 28px); -webkit-mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent);
+      mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent); }
+    .m-saver.st-plain .ln { font-size: 1em; color: rgba(255, 255, 255, .8); font-weight: 600; white-space: normal; text-shadow: 0 2px 24px #000c; }
+    @media (prefers-reduced-motion: reduce) { .ln, .m-saver .col { transition: none; animation: none; } }
   `];
 }
 if (!customElements.get('jb-lyrics')) customElements.define('jb-lyrics', JbLyrics);

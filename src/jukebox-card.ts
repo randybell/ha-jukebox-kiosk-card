@@ -11,10 +11,14 @@ import './lyrics/lyrics-view';
 import { LyricsStore, type LyricsStatus } from './lyrics/store';
 import { QueueModel } from './queue-model';
 import { roomsOf, playerArt } from './shared';
+import './speakers-view';
+import type { JbSpeakers } from './speakers-view';
+import { SpeakerStore } from './speakers/ma';
+import { canGroup, canJumpQueue, targetsOf, targetMa, isActive, validPreset, validQuiet } from './speakers/model';
 import { resolveBackdrop, drawPreblurred, BACKDROPS, prefersReducedMotion, type BackdropMode } from './backdrop';
 import type { HomeAssistant, JukeboxCardConfig, TabId } from './types';
 
-export const VERSION = '0.4.2';
+export const VERSION = '0.5.0';
 const TABS: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'now', label: 'Now Playing', icon: 'disc' },
   { id: 'browse', label: 'Browse', icon: 'browse' },
@@ -22,7 +26,9 @@ const TABS: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'queue', label: 'Queue', icon: 'queue' },
   { id: 'lyrics', label: 'Lyrics', icon: 'lyrics' },
 ];
-const CHILDREN = ['jb-now', 'jb-browse', 'jb-search', 'jb-queue'];
+const CHILDREN = ['jb-now', 'jb-browse', 'jb-search', 'jb-queue', 'jb-speakers'];
+/** dynamic mode: the group this device plays on, remembered per device */
+const TARGET_KEY = 'jukebox-card:target:v1';
 const bool = (v: unknown) => v === undefined || typeof v === 'boolean';
 const num = (v: unknown, lo: number, hi: number) => v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi);
 /** Screensaver status line for lyrics states that have nothing to show (shown only when screensaver lyrics are on). */
@@ -31,6 +37,35 @@ const FIT_MIN = 320;
 /** Short-viewport compaction thresholds for the fitted card height (px). */
 const SHORT_H = 700, TINY_H = 560;
 const SAVER_LYRICS_STATUS: Partial<Record<LyricsStatus, string>> = { none: 'No lyrics', error: 'Lyrics unavailable', loading: 'Looking for lyrics…' };
+
+/** 0.5.0 speaker keys; throws like the rest of setConfig */
+function validateSpeakers(c: JukeboxCardConfig) {
+  const oneOf = (k: keyof JukeboxCardConfig, vals: string[]) => {
+    if (c[k] !== undefined && !vals.includes(c[k] as string)) throw new Error(`jukebox-card: ${String(k)} must be one of ${vals.join(', ')}.`);
+  };
+  oneOf('speaker_mode', ['fixed', 'dynamic']);
+  oneOf('grouping', ['admins', 'everyone', 'nobody']);
+  oneOf('guest_access', ['volume', 'none']);
+  oneOf('leader_drop', ['block', 'allow']);
+  if (!bool(c.large_buttons)) throw new Error('jukebox-card: large_buttons must be true or false.');
+  if (c.grouping_users !== undefined && (!Array.isArray(c.grouping_users) || !c.grouping_users.every((u) => typeof u === 'string')))
+    throw new Error('jukebox-card: grouping_users must be a list of user names or ids.');
+  if (c.targets !== undefined) {
+    if (!Array.isArray(c.targets)) throw new Error('jukebox-card: targets must be a list of {entity, name, members}.');
+    for (const t of c.targets) {
+      const e = typeof t === 'string' ? t : t?.entity;
+      if (typeof e !== 'string' || !e.startsWith('media_player.')) throw new Error(`jukebox-card: each target needs a media_player entity (got ${JSON.stringify(t)}).`);
+      if (typeof t === 'object' && t.members !== undefined && (!Array.isArray(t.members) || !t.members.every((m) => typeof m === 'string' && m.startsWith('media_player.'))))
+        throw new Error(`jukebox-card: target ${e}: members must be media_player entities.`);
+    }
+  }
+  if (c.presets !== undefined) {
+    if (!Array.isArray(c.presets)) throw new Error('jukebox-card: presets must be a list of {name, members, volumes}.');
+    for (const p of c.presets) if (!validPreset(p)) throw new Error(`jukebox-card: preset ${JSON.stringify((p as any)?.name ?? p)} needs a name, media_player members and volumes 0-100.`);
+  }
+  if (c.quiet_hours !== undefined && !validQuiet(c.quiet_hours))
+    throw new Error('jukebox-card: quiet_hours needs start and end (HH:MM) and max_volume (0-100).');
+}
 
 export class JukeboxCard extends LitElement {
   static properties = {
@@ -44,6 +79,7 @@ export class JukeboxCard extends LitElement {
     _qart: { state: true },
     _stage: { state: true },
     _stageUi: { state: true },
+    _spk: { state: true },
   };
   hass?: HomeAssistant;
   private _config!: JukeboxCardConfig;
@@ -78,6 +114,11 @@ export class JukeboxCard extends LitElement {
   private _fitTrail = 0;
   private _fitTimer?: number;
   private _fitRo?: ResizeObserver;
+  /** config with defaults, before the dynamic-mode target is applied (fixed mode: _config === _base) */
+  private _base!: JukeboxCardConfig;
+  private _spk = false;
+  /** Music Assistant players (dynamic mode only; fixed mode never calls it) */
+  readonly speakers = new SpeakerStore();
 
   static getConfigElement() { return document.createElement('jukebox-card-editor'); }
   static getStubConfig(): Partial<JukeboxCardConfig> {
@@ -120,21 +161,61 @@ export class JukeboxCard extends LitElement {
     if (!num(config.lyrics_offset_ms, -5000, 5000)) throw new Error('jukebox-card: lyrics_offset_ms must be between -5000 and 5000.');
     if (config.backdrop !== undefined && !BACKDROPS.includes(config.backdrop))
       throw new Error(`jukebox-card: backdrop must be one of ${BACKDROPS.join(', ')}.`);
+    validateSpeakers(config);
     const first = !this._config;
-    this._config = {
+    this._base = {
       entity: 'media_player.everywhere', accent: 'mono', limit: 8,
       favorite_entity: 'button.everywhere_favorite_current_song', screensaver_minutes: 10, ...config,
     };
+    this._config = this.effective();
     if (first && config.default_tab && this.tabs().some((t) => t.id === config.default_tab)) this._tab = config.default_tab;
     if (!this.tabs().some((t) => t.id === this._tab)) this._tab = 'now';
     this.lyrics.enabled = this._config.show_lyrics !== false;
     this.lyrics.entryId = this._config.mass_queue_entry_id || (this._config as any).queue_config_entry_id || '';
+    this.speakers.entryId = this.lyrics.entryId;
+    this.queue.entryId = this.lyrics.entryId || undefined;
+    this.queue.readsBuffer = () => !!this._config && canJumpQueue(this._config, this.hass?.user);
     this.queue.entity = this._config.entity!;
     this.queue.limitAfter = this._config.queue_limit ?? 200;
     ensureFonts(this._config.font_base);
     this.applyBackdrop();
     this.armIdle();
   }
+  /** fixed mode: the config as given. dynamic: entity = the remembered target (when it is one of the targets) + start guard. */
+  private effective(): JukeboxCardConfig {
+    const b = this._base;
+    if (b.speaker_mode !== 'dynamic') return b;
+    let t = '';
+    try { t = localStorage.getItem(TARGET_KEY) ?? ''; } catch { /* private mode */ }
+    const ok = !!t && (b.targets?.length ? targetsOf(b, this.hass).some((x) => x.entity === t) : t.startsWith('media_player.'));
+    return { ...b, entity: ok ? t : b.entity, _guard: this.guard };
+  }
+  /** Move the card to another group (from the Speakers panel). Allowed users only; remembered per device. */
+  private onTarget = (e: CustomEvent) => {
+    const t = e.detail?.entity as string | undefined;
+    if (!t || this._base?.speaker_mode !== 'dynamic' || !canGroup(this._base, this.hass?.user) || t === this._config.entity) return;
+    try { localStorage.setItem(TARGET_KEY, t); } catch { /* */ }
+    this._config = this.effective();
+    this.queue.entity = this._config.entity!;
+    this.queue.refreshSoon(0);
+  };
+  private onSpeakers = (e: CustomEvent) => { this._spk = e.detail?.open !== false; };
+  /** Start guard (dynamic mode): starting an idle group takes speakers from other groups: say which, and ask. */
+  private guard = async (entity: string): Promise<boolean> => {
+    const st = this.hass?.states[entity]?.state;
+    if (st === 'playing' || st === 'paused') return true;
+    if (!this.speakers.entryId) return true;
+    const players = await this.speakers.refresh();
+    await this.speakers.loadConfigs(); // the group's default speakers (config/players/get), when MA lets us read them
+    const ma = targetMa(entity, this.hass, players);
+    if (!ma || isActive(players.get(ma))) return true;
+    const el = this.renderRoot.querySelector('jb-speakers') as JbSpeakers | null;
+    if (!el) return true;
+    const { lines } = el.startTakeovers(entity, players);
+    if (!lines.length) return true;
+    const name = (this.hass?.states[entity]?.attributes?.friendly_name as string) ?? entity;
+    return el.ask({ title: `Start ${name}?`, sub: 'Speakers playing elsewhere switch over.', lines, ok: 'Start' });
+  };
   private applyBackdrop = () => {
     if (!this._config) return;
     const r = resolveBackdrop(this._config.backdrop);
@@ -160,6 +241,8 @@ export class JukeboxCard extends LitElement {
     this.addEventListener('jukebox-nav', this.onNav as EventListener);
     this.addEventListener('jukebox-open', this.onOpen as EventListener);
     this.addEventListener('jukebox-stage', this.onStage as EventListener);
+    this.addEventListener('jukebox-target', this.onTarget as EventListener);
+    this.addEventListener('jukebox-speakers', this.onSpeakers as EventListener);
     document.addEventListener('fullscreenchange', this.onFsChange);
     document.addEventListener('webkitfullscreenchange', this.onFsChange);
     window.addEventListener('keydown', this.onKey);
@@ -193,6 +276,9 @@ export class JukeboxCard extends LitElement {
     this.removeEventListener('jukebox-nav', this.onNav as EventListener);
     this.removeEventListener('jukebox-open', this.onOpen as EventListener);
     this.removeEventListener('jukebox-stage', this.onStage as EventListener);
+    this.removeEventListener('jukebox-target', this.onTarget as EventListener);
+    this.removeEventListener('jukebox-speakers', this.onSpeakers as EventListener);
+    this.speakers.stopPolling();
     document.removeEventListener('fullscreenchange', this.onFsChange);
     document.removeEventListener('webkitfullscreenchange', this.onFsChange);
     window.removeEventListener('keydown', this.onKey);
@@ -321,6 +407,16 @@ export class JukeboxCard extends LitElement {
 
   // ---------- child events ----------
   private onPlayed = () => this.queue.refreshSoon(800);
+  /** tablist keyboard support (roving tabindex): ←/→/Home/End select a tab and move the focus ring with it */
+  private onTabKey = (e: KeyboardEvent) => {
+    const ids = this.tabs().map((t) => t.id), n = ids.length;
+    let i = ids.indexOf(this._tab);
+    if (e.key === 'ArrowRight') i = (i + 1) % n; else if (e.key === 'ArrowLeft') i = (i - 1 + n) % n;
+    else if (e.key === 'Home') i = 0; else if (e.key === 'End') i = n - 1; else return;
+    e.preventDefault();
+    this._tab = ids[i]; this._spk = false;
+    this.updateComplete.then(() => (this.renderRoot.querySelector(`.tab[data-tab="${ids[i]}"]`) as HTMLElement | null)?.focus());
+  };
   private onNav = (e: CustomEvent) => { const t = e.detail?.tab; if (this.tabs().some((x) => x.id === t)) this._tab = t; };
 
   // ---------- Stage (full-screen art + lyrics) ----------
@@ -407,6 +503,7 @@ export class JukeboxCard extends LitElement {
     if (changed.has('hass') && this.hass) {
       const old = changed.get('hass') as HomeAssistant | undefined;
       this.queue.hass = this.hass;
+      this.speakers.hass = this.hass;
       const id = this._config.entity!;
       const a = this.hass.states[id], b = old?.states[id];
       if (!old) this.queue.refreshSoon(0);
@@ -470,32 +567,40 @@ export class JukeboxCard extends LitElement {
     const ent = this.hass?.states[this._config.entity!];
     const pic = this.art();
     const name = ent?.attributes?.friendly_name ?? 'Everywhere';
+    const dyn = this._config.speaker_mode === 'dynamic';
+    const gm = ent?.attributes?.group_members;
+    const live = dyn && ent && ['playing', 'paused', 'buffering'].includes(ent.state) && Array.isArray(gm) ? gm.length : 0;
     const rooms = roomsOf(this._config, this.hass).length;
     const bd = this._bd;
     const artStyle = pic && bd === 'full' ? `--_art:url("${pic.replace(/"/g, '%22')}")` : '';
     const view = (id: TabId, child: unknown) => html`<div class="view" data-view=${id} ?hidden=${this._tab !== id}>${child}</div>`;
     const c = this._config, h = this.hass, q = this.queue, tabs = this.tabs();
     return html`
-      <ha-card class="app bd-${bd} ${bd === 'full' ? '' : 'solid'} ${prefersReducedMotion() ? 'rm' : ''}" style="${c.height ? `--jb-height:${c.height}` : ''}">
+      <ha-card class="app bd-${bd} ${bd === 'full' ? '' : 'solid'} ${prefersReducedMotion() ? 'rm' : ''} ${c.large_buttons ? 'lg' : ''}" style="${c.height ? `--jb-height:${c.height}` : ''}">
         <header class="top">
           <div class="brand">${icon('disc', 'i brand-i')}<span>${c.title ?? 'Jukebox'}</span></div>
-          <div class="pill" title=${c.entity!}>${icon('group', 'i xs')}${name}${rooms ? html`<b>· ${rooms} room${rooms === 1 ? '' : 's'} synced</b>` : nothing}</div>
+          <button class="pill" title=${c.entity!} tabindex="-1" aria-label="Speakers: ${name}" aria-haspopup="dialog" @pointerdown=${(e: PointerEvent) => e.preventDefault()}
+            @click=${() => (this._spk = !this._spk)}>${icon('group', 'i xs')}<span class="pn">${name}</span>${dyn
+              ? html`<b>· ${live ? `${live} speaker${live === 1 ? '' : 's'}` : ent?.state === 'buffering' ? 'regrouping…' : 'idle'}</b>`
+              : rooms ? html`<b>· ${rooms} room${rooms === 1 ? '' : 's'} synced</b>` : nothing}</button>
           <div class="spacer"></div>
           <div class="clock">${this.timeStr()}</div>
         </header>
         <main class="np ${pic ? 'has-art' : ''}" style=${artStyle}>
           ${bd === 'light' ? html`<canvas class="bdl" width="64" height="40" aria-hidden="true"></canvas>` : nothing}
-          ${view('now', html`<jb-now .hass=${h} .config=${c} .queue=${q} .lyrics=${this.lyrics} ?active=${this._tab === 'now' && !this._saver && !this._stage}></jb-now>`)}
-          ${view('browse', html`<jb-browse .hass=${h} .config=${c} ?active=${this._tab === 'browse'}></jb-browse>`)}
-          ${view('search', html`<jb-search .hass=${h} .config=${c} ?active=${this._tab === 'search'}></jb-search>`)}
-          ${view('queue', html`<jb-queue .hass=${h} .config=${c} .queue=${q} ?active=${this._tab === 'queue'}></jb-queue>`)}
+          ${view('now', html`<jb-now ?large=${!!c.large_buttons} .hass=${h} .config=${c} .queue=${q} .lyrics=${this.lyrics} ?active=${this._tab === 'now' && !this._saver && !this._stage}></jb-now>`)}
+          ${view('browse', html`<jb-browse ?large=${!!c.large_buttons} .hass=${h} .config=${c} ?active=${this._tab === 'browse'}></jb-browse>`)}
+          ${view('search', html`<jb-search ?large=${!!c.large_buttons} .hass=${h} .config=${c} ?active=${this._tab === 'search'}></jb-search>`)}
+          ${view('queue', html`<jb-queue ?large=${!!c.large_buttons} .hass=${h} .config=${c} .queue=${q} ?active=${this._tab === 'queue'}></jb-queue>`)}
           ${tabs.some((t) => t.id === 'lyrics') ? view('lyrics', html`<jb-lyrics mode="tab" .hass=${h} .config=${c} .store=${this.lyrics} .art=${pic}
             ?active=${this._tab === 'lyrics' && !this._saver && !this._stage}></jb-lyrics>`) : nothing}
+          <!-- inside the middle: the fitted header and tab bar stay visible and tappable while the panel is open -->
+          <jb-speakers .hass=${h} .config=${c} .store=${this.speakers} ?open=${this._spk} ?large=${!!c.large_buttons}></jb-speakers>
         </main>
-        <nav class="tabs" role="tablist" style=${`--tabs:${tabs.length}`}>
-          ${tabs.map((t) => html`<button class="tab ${this._tab === t.id ? 'active' : ''}" role="tab" tabindex="-1" data-tab=${t.id}
+        <nav class="tabs" role="tablist" style=${`--tabs:${tabs.length}`} @keydown=${this.onTabKey}>
+          ${tabs.map((t) => html`<button class="tab ${this._tab === t.id ? 'active' : ''}" role="tab" tabindex=${this._tab === t.id ? '0' : '-1'} data-tab=${t.id}
               aria-selected=${this._tab === t.id ? 'true' : 'false'}
-              @pointerdown=${(e: PointerEvent) => e.preventDefault()} @click=${() => (this._tab = t.id)}>${icon(t.icon)}<span>${t.label}</span>${t.id === 'queue' && this._qcount
+              @pointerdown=${(e: PointerEvent) => e.preventDefault()} @click=${() => { this._tab = t.id; this._spk = false; }}>${icon(t.icon)}<span>${t.label}</span>${t.id === 'queue' && this._qcount
                 ? html`<em class="badge">${this._qcount > 99 ? '99+' : this._qcount}</em>` : nothing}</button>`)}
         </nav>
         ${this._stage ? this.renderStage() : nothing}
@@ -522,6 +627,8 @@ export class JukeboxCard extends LitElement {
     .pill { white-space: nowrap; display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 999px; background: #ffffff0f;
       border: 1px solid #ffffff1a; font-size: 14px; font-weight: 600; }
     .pill b { font-weight: 500; color: var(--_muted); }
+    .pill { color: var(--_fg); min-height: 40px; cursor: pointer; } .pill:active { background: #ffffff26; }
+    .lg .pill { min-height: 52px; font-size: 17px; padding: 0 18px; }
     .spacer { flex: 1; }
     .clock { white-space: nowrap; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
     .np { container: np / size; min-height: 0; position: relative; overflow: hidden; background: #000; }
@@ -565,6 +672,7 @@ export class JukeboxCard extends LitElement {
        static screen can't burn in. The .rm class mirrors the media query so the dev harness/tests can force it. */
     @media (prefers-reduced-motion: reduce) { .sv-drift, .sv-bg { animation: none; } .sv-drift { animation: hop 600s step-end infinite; } }
     .rm .sv-drift, .rm .sv-bg { animation: none; } .rm .sv-drift { animation: hop 600s step-end infinite; }
+    .rm { --jb-ly-slide: 0ms; } /* inherited into jb-lyrics: the screensaver lyrics move without sliding */
     @keyframes hop { 0% { transform: translate(0, 0) } 10% { transform: translate(calc(70cqw - 100%), 18cqh) } 20% { transform: translate(28cqw, calc(64cqh - 100%)) } 30% { transform: translate(calc(78cqw - 100%), 4cqh) } 40% { transform: translate(6cqw, calc(60cqh - 100%)) } 50% { transform: translate(calc(50cqw - 50%), 30cqh) } 60% { transform: translate(calc(74cqw - 100%), calc(66cqh - 100%)) } 70% { transform: translate(12cqw, 10cqh) } 80% { transform: translate(calc(60cqw - 100%), calc(40cqh - 50%)) } 90% { transform: translate(20cqw, calc(66cqh - 100%)) } 100% { transform: translate(0, 0) } }
     .bd-static .saver, .bd-off .saver { background: #000; }
     .sv-drift.has-ly .sv-clock { font-size: clamp(56px, 10cqw, 140px); }
@@ -606,28 +714,55 @@ export class JukeboxCard extends LitElement {
       .nolyr .st-main { grid-template-rows: minmax(0, 1fr); align-content: center; }
       .nolyr .st-left { flex-direction: column; } .nolyr .st-art { width: min(82cqw, 56cqh); }
     }
-    .tabs { display: grid; grid-template-columns: repeat(var(--tabs, 4), minmax(0, 1fr)); padding: 6px var(--_pad) calc(8px + env(safe-area-inset-bottom)); background: #000;
+    /* Tab bar (0.5.0, segmented): one rounded translucent track on the black footer, equal segments with hairline
+       dividers, the active segment solid white. Only colour/transform transitions (no layout, no blur). */
+    .tabs { display: grid; grid-template-columns: repeat(var(--tabs, 4), minmax(0, 1fr)); gap: 4px;
+      padding: 11px calc(var(--_pad) + 4px) calc(13px + env(safe-area-inset-bottom)); background: #000;
       border-top: 1px solid var(--_hairline); position: relative; z-index: 2; }
-    .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 64px; border-radius: var(--_radius-s);
-      color: var(--_inactive); font-size: 13px; font-weight: 600; letter-spacing: .02em; position: relative; }
-    .tab .i { width: 28px; height: 28px; }
-    .tab.active { color: var(--_active); }
-    .tab.active::after { content: ""; position: absolute; top: -7px; left: 34%; right: 34%; height: 2px; background: var(--_active); }
+    .tabs::before { content: ""; position: absolute; top: 7px; left: var(--_pad); right: var(--_pad); bottom: calc(9px + env(safe-area-inset-bottom));
+      border-radius: 18px; background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16); pointer-events: none; }
+    .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 58px;
+      padding: 3px; border-radius: 14px; background: transparent; border: 0;
+      color: rgba(255, 255, 255, .78); font-size: 16px; font-weight: 600; line-height: 1.15; letter-spacing: .01em; position: relative;
+      transition: background-color 120ms ease, color 120ms ease, transform 120ms ease; }
+    .tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tab .i { width: 30px; height: 30px; }
+    .tab + .tab::before { content: ""; position: absolute; left: -2.5px; top: 25%; bottom: 25%; width: 1px; background: rgba(255, 255, 255, .16); transition: opacity 120ms ease; }
+    .tab.active::before, .tab.active + .tab::before, .tab:hover::before, .tab:hover + .tab::before { opacity: 0; }
+    @media (hover: hover) { .tab:hover { background: rgba(255, 255, 255, .12); color: #fff; } }
+    .tab:active { transform: scale(.97); background: rgba(255, 255, 255, .2); color: #fff; }
+    .tab.active, .tab.active:hover, .tab.active:active { background: var(--_active); color: var(--_on-accent); }
+    .tab:focus-visible { outline: 2px solid var(--_active); outline-offset: 3px; }
+    .tab .badge { top: 4px; left: calc(50% + 6px); }
+    .tab.active .badge { background: var(--_on-accent); color: var(--_active); }
+    .lg .tab { min-height: 80px; font-size: 17px; } .lg .tab .i { width: 34px; height: 34px; }
     @container np (max-width: 520px) { }
     @media (max-width: 960px) { .pill b { display: none; } }
     @media (max-width: 640px) {
-      .pill { display: none; } .clock { font-size: 18px; } .top { min-height: 52px; padding-top: 10px; padding-bottom: 10px; }
-      .tab { min-height: 56px; font-size: 11px; } .tab .i { width: 24px; height: 24px; }
+      .pill { padding: 0; width: 44px; min-height: 44px; justify-content: center; } .pill .pn, .pill b { display: none; } .lg .pill { width: 56px; min-height: 56px; } .clock { font-size: 18px; } .top { min-height: 52px; padding-top: 10px; padding-bottom: 10px; }
+      .tabs { gap: 2px; padding-left: calc(var(--_pad) + 3px); padding-right: calc(var(--_pad) + 3px); }
+      .tab { font-size: 12px; letter-spacing: 0; } .tab .i { width: 26px; height: 26px; }
+      .tab span { white-space: normal; text-align: center; line-height: 1.1; }
+      .lg .tab { min-height: 68px; font-size: 13px; } .lg .tab .i { width: 30px; height: 30px; }
     }
     /* short panels (fitted height < 700 / < 560 px): tighter header and tab bar so the middle keeps the room */
     :host([data-fit]) .top { min-height: 50px; padding-top: 7px; padding-bottom: 7px; }
     :host([data-fit]) .brand { font-size: 19px; } :host([data-fit]) .brand-i { width: 24px; height: 24px; } :host([data-fit]) .clock { font-size: 19px; }
     :host([data-fit]) .pill { padding: 5px 12px; font-size: 13px; }
-    :host([data-fit]) .tabs { padding-top: 4px; padding-bottom: calc(5px + env(safe-area-inset-bottom)); }
-    :host([data-fit]) .tab { min-height: 54px; gap: 2px; } :host([data-fit]) .tab .i { width: 24px; height: 24px; }
-    :host([data-fit]) .tab.active::after { top: -5px; }
+    :host([data-fit]) .tabs { gap: 3px; padding: 7px calc(var(--_pad) + 3px) calc(8px + env(safe-area-inset-bottom)); }
+    :host([data-fit]) .tabs::before { top: 4px; bottom: calc(5px + env(safe-area-inset-bottom)); border-radius: 15px; }
+    :host([data-fit]) .tab { min-height: 50px; padding: 3px; gap: 3px; font-size: 14px; border-radius: 12px; } :host([data-fit]) .tab .i { width: 24px; height: 24px; }
+    :host([data-fit]) .tab + .tab::before { left: -2px; }
+    :host([data-fit]) .lg .tab { min-height: 60px; font-size: 15px; } :host([data-fit]) .lg .tab .i { width: 28px; height: 28px; }
     :host([data-fit=tiny]) .top { min-height: 44px; padding-top: 5px; padding-bottom: 5px; }
-    :host([data-fit=tiny]) .tab { min-height: 48px; font-size: 11px; } :host([data-fit=tiny]) .tab .i { width: 22px; height: 22px; }
+    /* tiny (< 560 px): one row, icon + small label side by side (icons only on narrow screens) */
+    :host([data-fit=tiny]) .tabs { padding: 6px calc(var(--_pad) + 3px) calc(6px + env(safe-area-inset-bottom)); }
+    :host([data-fit=tiny]) .tabs::before { top: 3px; bottom: calc(3px + env(safe-area-inset-bottom)); border-radius: 14px; }
+    :host([data-fit=tiny]) .tab { flex-direction: row; gap: 8px; min-height: 44px; font-size: 13px; border-radius: 11px; }
+    :host([data-fit=tiny]) .tab .i { width: 22px; height: 22px; }
+    :host([data-fit=tiny]) .tab .badge { position: static; min-width: 18px; height: 18px; padding: 0 5px; font-size: 10px; flex: none; }
+    :host([data-fit=tiny]) .lg .tab { min-height: 52px; font-size: 14px; } :host([data-fit=tiny]) .lg .tab .i { width: 26px; height: 26px; }
+    @media (max-width: 640px) { :host([data-fit=tiny]) .tab span { display: none; } }
   `];
 }
 if (!customElements.get('jukebox-card')) customElements.define('jukebox-card', JukeboxCard);

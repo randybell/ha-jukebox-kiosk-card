@@ -2,6 +2,43 @@
 
 All notable changes to Jukebox Card. Versions follow [semver](https://semver.org/).
 
+## 0.5.0 — 2026-10-31
+
+### Added
+- **Speakers panel**, opened by tapping the header status. Responsive at 390x844, 1280x800 and 1920x1080. It opens in the middle of the card, between the header and the tab bar, so it works inside the 0.4.2 fitted height (including the compact `short` / `tiny` layouts): the tab bar stays visible and a tab tap closes the panel; the panel scrolls when it is taller than the room.
+  - `speaker_mode: fixed` (default): a per-room volume mixer only; every call still goes to `entity`, so a 0.4 config makes identical calls.
+  - `speaker_mode: dynamic`: "Play on" target chips (remembered per device), join / drop / move with Music Assistant only (`mass_queue.send_command` → `players/cmd/set_members`, `player_queues/transfer`; never HA `media_player.join` / `unjoin`), players read with `players/all`. Static MA sync groups are shown as fixed. Start / move warnings name the groups that would lose speakers.
+  - Leader drop: `leader_drop: block` (default) or `allow` (MA hands off / re-forms the group).
+  - Optimistic changes with timeouts, a toast on failure and Undo.
+  - Per-room now-playing line.
+  - `presets` (rooms + volumes + optional target).
+  - `quiet_hours` volume cap (guests by default), applied to the panel and Now Playing sliders.
+  - `large_buttons`.
+- **Permissions** (`grouping`, `grouping_users`, `guest_access`): guests get volume only. This is a UI lock, not security.
+- **Queue row icons** for users who may group: Play now (confirmation "Play this now? The current song will stop." → `player_queues/play_index`), Play next (`player_queues/move_item`, `pos_shift = (current + 1) − index`), Move up / Move down, and Remove (`player_queues/delete_item`, no dialog, "Removed <title>. Undo" for 5 s; Undo = `player_queues/play_media` option `add` + `player_queues/items` + `move_item`, and the toast says when the place can't be restored). Never on the playing row. On phones Play next and Remove stay inline and ⋯ opens an action sheet with the rest. Without `mass_queue_entry_id` the 0.4 mass_queue services are used.
+- Editor: a **Speakers** section and `large_buttons` under Display.
+- **Tab bar redesign (segmented bar).** The bottom tabs are now real buttons on one rounded translucent track: equal segments with hairline dividers, 16 px labels (labels ellipsize instead of wrapping on wide cards, wrap to two lines on phones), and the active tab is a solid white segment with dark text and icon. Hover, pressed (`scale(.97)`) and keyboard focus states use only colour / transform transitions. Short (`data-fit=short`) and tiny (`data-fit=tiny`, icon + label in one row, icons only on phones) layouts are compacted, and `large_buttons` keeps larger tabs there too (60 px short, 52 px tiny, 80 px otherwise).
+- **Tab bar keyboard support** (roving tabindex): the active tab is the one tab stop (`tabindex=0`, the others `-1`), and ←/→/Home/End switch tabs and move the focus ring with them. Switching tabs from the keyboard also closes the Speakers panel.
+- Dev mock of Music Assistant (`dev/mock-ma.js`, placeholder ids only) with the live MA behaviour: set_members, transfer, play_index, move_item (buffered items raise, out-of-range is a silent no-op), delete_item (buffered items ignored), play_media add, items.
+- Tests: `test/unit/speakers.unit.mjs`, `test/speakers.e2e.mjs`, screenshots `test/shots-v050.mjs` (including the segmented tab bar at 1024x666 below the HA toolbar, 1280x800 and 390x844).
+- `test/speakers.e2e.mjs` section P: every Play now path (row icon, a played row's icon, the phone ⋯ sheet, the 0.4 long-press menu, a row tap, and the 0.4-service fallback) only jumps playback to that item in place: Music Assistant's queue keeps the same items in the same order, the card's rows match it, and nothing but `play_index` / `play_queue_item` is sent (no `play_media`, replace, clear, move or delete).
+- The queue's phone action sheet scrolls inside the card when it is taller than the room (short screens with `large_buttons`).
+- `test/fit.e2e.mjs` section F6: the Speakers panel, large-button mode, the queue ⋯ sheet, the Undo bar and the Play-now confirm all stay between the header and the tab bar, with no page scroll and the tab bar fully visible, at 1024x666 / 1024x600 / 1280x720 / 1280x800 / 844x390 / 390x844 / 390x600 below the HA toolbar.
+
+- **Matches live Music Assistant 2.10.9** (checked 31 Oct; mock `&live=1` gives the live timings):
+  - Dynamic groups: MA's own default member list (`config/players/get` → `group_members`) is offered as an "<Group> default" preset chip next to the card presets; if the config can't be read, only the card presets show. Current members still come from `players/all`.
+  - Static groups never get `set_members` (MA answers 500 "does not support group commands").
+  - HA entities carry `mass_player_id: null` and idle groups report another group's `active_queue`, so a target is matched to its MA group by name first and by `active_queue` only while it plays.
+  - Dropping a group's leader: MA goes silent ~6 s before the next member leads; the panel says "Regrouping…" until it plays again (the header says "regrouping…" while a group buffers).
+  - Queue: rows up to MA's buffered item (`player_queues/get` → `index_in_buffer`) are locked (no Play next / Remove, Move disabled, also in the long-press menu); Play next lands after the buffered row. If MA refuses a move (500 "already played/buffered") or ignores a delete, the toast says "That track is already loading" and the queue reloads.
+
+### Fixed
+- **Lyrics scrolled the wrong way when idle.** Lines now always move up, with new lines coming in from the bottom, on every surface. The Stage view no longer jumps down (a stale scroll position plus browser scroll anchoring made 177–185 of its moves go down). The screensaver now slides up instead of jumping (synced) or not moving at all (plain), because lines were replaced instead of kept and their flex sizing collapsed. Only `transform` is animated, with no blur; reduced motion and the `.rm` setting switch the slide off. Covered by direction tests on the overlay, Stage, Lyrics tab and screensaver, synced and plain (3+ line changes each, never down).
+
+### Compatibility
+- 0.4 configs load unchanged and make the same calls (fixed mode). Tapping a queue row and the long-press menu keep the 0.4 behaviour, except that the menu no longer offers Play next / Move / Remove on the track MA is already loading.
+- Play now never re-sorts, replaces or clears the queue: it only moves playback to the chosen item (`play_index` / `play_queue_item`).
+
 ## 0.4.2 — 2026-10-31
 
 Hotfix: the bottom tab bar was cut off on standard monitors.

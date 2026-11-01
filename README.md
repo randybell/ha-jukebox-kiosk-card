@@ -1,4 +1,4 @@
-# Jukebox Card (`ha-jukebox-kiosk-card`) 0.4.2
+# Jukebox Card (`ha-jukebox-kiosk-card`) 0.5.0
 
 This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox kiosk. It uses the Black Frame Mono look: black header and footer, the album art blurred behind the centre, white active buttons and light-white inactive ones.
 
@@ -18,7 +18,7 @@ This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox ki
 - all five tabs: **Now Playing**, **Browse**, **Search**, **Queue** and **Lyrics**
 - lyrics from Music Assistant (synced or plain) on the art, a full-screen Stage, the Lyrics tab and the screensaver (see [Lyrics](#lyrics))
 - the screensaver
-- the card shell (header, rooms pill, clock, tab bar with a queue badge)
+- the card shell (header, rooms pill, clock, segmented tab bar with a queue badge; the active tab is a solid white segment)
 - backdrop performance modes for slow kiosk tablets (see [Backdrop and performance](#backdrop-and-performance))
 - automatic large-screen scaling (1920x1080 and up)
 
@@ -43,11 +43,12 @@ npm run typecheck     # tsc --noEmit
 ```bash
 python3 -m http.server 8765 --bind 127.0.0.1     # from the project root; the harness won't run from file://
 # open http://127.0.0.1:8765/dev/index.html?log=1
-npm test                                           # run.mjs (156 end-to-end checks) + lyrics unit tests (51) + lyrics end-to-end checks (84) (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
+npm test                                           # run.mjs (156 end-to-end checks) + lyrics unit tests (51) + lyrics end-to-end checks (84) + speakers unit tests (35) + speakers end-to-end checks (137) (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
 node test/shots-m2.mjs f1                          # every tab at 1920x1080, 1280x800, 820x1180 and 390x844 -> test/shots/m2/
 JB_SIZES=1920x1080 node test/shots-m2.mjs x1 '&backdrop=light'   # one size, one mode
 node test/shots-v040.mjs                           # lyrics surfaces, states and the editor at 1280x800, 1920x1080, 390x844 -> test/shots/v040/
-npm run test:fit                                   # fit-to-height checks: 11 sizes x HA toolbar / kiosk / full screen, every tab, sidebar, resize, emulated Mac Chrome zoom -> test/shots/v042/
+node test/shots-v050.mjs                           # speakers panel (fixed, dynamic, guest, presets, move, large buttons), queue row icons and the segmented tab bar at 390x844, 1280x800, 1920x1080 and 1024x666 below the HA toolbar -> test/shots/v050/
+npm run test:fit                                   # fit-to-height checks: 11 sizes x HA toolbar / kiosk / full screen, every tab, sidebar, resize, emulated Mac Chrome zoom, 0.5.0 Speakers panel / large buttons / queue overlays -> test/shots/v042/
 node test/perf.mjs 3                               # frame-time benchmark, see "Backdrop and performance"
 ```
 
@@ -89,6 +90,10 @@ URL parameters:
 | `lyrlat=ms` | lyrics reply latency (the live first lookup takes 8–33 s) |
 | `overlay=1\|0` | preset the art lyrics overlay toggle |
 | `keeplyrics=1` | with `fresh=1`, keep the lyrics cache |
+| `admin=1`, `user=<name>`, `uid=<id>` | the HA user (default: a non-admin guest) |
+| `spk=dyn`, `target=<entity>`, `cfg=<json>` | dynamic speaker mode, the starting target, extra card config (merged last) |
+| `ma=split\|busy`, `grp=` / `xfer=fail\|slow\|timeout`, `gap=ms`, `malat=ms` | mock Music Assistant situations and failures (`dev/mock-ma.js`, log in `window.__maLog`) |
+| `qbuf=1`, `qadd=fail`, `qitems=fail` | next track already buffered in MA; queue re-add / item lookup fails (Remove → Undo) |
 | `cfg=<json>` | merged into the card config |
 | `backdrop=auto\|full\|light\|static\|off` | sets the `backdrop` option |
 | `ha=toolbar\|kiosk\|masonry` | emulates a Home Assistant view around the card: fixed 56 px toolbar (`--header-height`), toolbar hidden (kiosk mode), or a masonry view with padding and a card above |
@@ -107,6 +112,7 @@ Without mass_queue the card still works for search, the Browse grid, transport, 
 - album and artist pages fall back to search ("matched by search") instead of the real track lists, and playlist pages show a note instead of their tracks (Play and Shuffle still work);
 - the Queue tab shows "Queue unavailable", because it reads and edits the queue with `mass_queue` actions (`get_queue_items` and friends);
 - lyrics show "Lyrics unavailable".
+- 0.5.0: the Speakers panel's dynamic mode (grouping, moving music, presets) and the queue row icons (Play now, Play next, Remove with Undo) are not available; the fixed-mode volume mixer still works.
 
 ## Install on Home Assistant (nothing here touches your server)
 
@@ -119,7 +125,7 @@ Without mass_queue the card still works for search, the Browse grid, transport, 
 ### Manual
 
 1. Download `jukebox-card.js` and `jukebox-card-fonts.zip` from a release (or run `npm run build`) and put them in `/config/www/jukebox/` as `jukebox-card.js` and `fonts/`.
-2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.4.2`, type **JavaScript module**.
+2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.5.0`, type **JavaScript module**.
    - Change `?v=` on every update, or Fully Kiosk will keep the old file.
    - Fonts are found in `fonts/` next to the `.js` automatically.
 
@@ -175,6 +181,15 @@ views:
 | `screensaver_lyrics` | `true` | Previous / current / next line (synced) or a slow scroll (plain) on the screensaver |
 | `lyrics_seek` | `true` | Long-press (0.55 s) a synced line to seek there. Never on radio |
 | `lyrics_offset_ms` | `500` (−5000–5000) | Shift for synced lyrics; positive shows lines sooner |
+| `speaker_mode` | `fixed` | `fixed`: always play on `entity`; the Speakers panel is a volume mixer and a 0.4 config makes exactly the same calls. `dynamic`: pick where to play, group, move and use presets. See [Speakers](#speakers-050) |
+| `targets` | all MA players | `dynamic` only: `[{entity, name?, members?}]` or entity ids the card may play on |
+| `grouping` | `admins` | Who may group, move, pick the target and use the queue's Play now / Play next / Remove icons: `admins`, `everyone` or `nobody`. **A UI lock, not security** |
+| `grouping_users` | `[]` | Extra users (name or user id) treated like admins for the above |
+| `guest_access` | `volume` | Everyone else in the Speakers panel: `volume` or `none` (read only) |
+| `leader_drop` | `block` | Dropping the leader of a playing group: `block`, or `allow` (MA re-forms the group on the next room after about 6 s of silence; the panel shows "Regrouping…") |
+| `presets` | `[]` | `[{name, members: [room entities], volumes?: {entity: percent}, target?}]` (`dynamic`) |
+| `quiet_hours` | — | `{start: 'HH:MM', end: 'HH:MM', max_volume: percent, applies?: guests\|everyone}` caps volume sliders; `start === end` means all day. Guests only by default |
+| `large_buttons` | `false` | Bigger touch targets and text everywhere |
 
 The visual editor covers entity, config entry, rooms (an entity list that keeps existing names), favorite entity and mass_queue entry; a **Display** section (screensaver presets Off / 1 / 5 / 10 / 15 / 30 / 60 min plus Custom, screensaver lyrics, default tab, backdrop, accent); a **Lyrics** section (lyrics, Lyrics tab, long-press seek, offset); and an Advanced section (browse limit and the rest). Options you leave at their defaults are not written to YAML, and existing 0.3.x configs load unchanged.
 
@@ -253,6 +268,23 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 - **Tap a row** to send `mass_queue.play_queue_item {entity, queue_item_id}`.
 - **Row buttons.** ↑ and ↓ send `move_queue_item_up` and `move_queue_item_down`; they are hidden on phones. **⋮** or a long-press opens a menu: Play now, Play next (`move_queue_item_next`), Move up, Move down, Remove (`remove_queue_item`). Every action sends exactly `{entity, queue_item_id}`.
 - **Header.** The Queue tab badge shows how many items are left.
+- **0.5.0 row icons** (for users allowed to group, see `grouping`; guests keep the 0.4 rows). They go through `mass_queue.send_command` with the MA queue id, and fall back to the 0.4 services when `mass_queue_entry_id` is not set:
+  - **Play now** (not on the playing row) asks first, "Play this now? The current song will stop.", then sends `player_queues/play_index {queue_id, index: queue_item_id}`. Every Play now (icon, ⋯ sheet, long-press menu, row tap) only moves playback to that item: the queue keeps its items and order, and nothing is replaced, cleared or moved.
+  - **Play next** sends `player_queues/move_item {queue_id, queue_item_id, pos_shift: (current + 1) − index}`, no dialog; disabled on the row that is already next, absent on played rows. If MA has already buffered the next track it ignores the move and the card shows MA's order again.
+  - **Move up / Move down**: as in 0.4, no dialog.
+  - **Remove** (never the playing row or played rows) sends `player_queues/delete_item {queue_id, item_id_or_index: queue_item_id}`, no dialog, and shows "Removed <title>. Undo" for 5 s. **Undo** re-adds the track's URI (`player_queues/play_media {queue_id, media: uri, option: add}`), finds the new row (`player_queues/items`) and moves it back (`move_item`). If it can only be re-added at the end, or not at all, the toast says so.
+  - Phones (card ≤ 520 px wide): Play next and Remove stay on the row; **⋯** opens an action sheet with Play now…, Play next, Move up, Move down, Remove. Wider cards show all five icons (44 px targets, right-aligned).
+  - Tapping a row and the long-press menu keep the 0.4 behaviour.
+  - The track Music Assistant is already loading (the one after the playing track, near its end) can't be moved or removed: those rows have no Play next / Remove and their Move buttons are off. If MA refuses anyway, the toast says "That track is already loading" and the queue reloads.
+
+## Speakers (0.5.0)
+
+- **Header status** ("Everywhere · 3 rooms synced", or "N speakers") opens the Speakers panel. The panel opens in the middle of the card, between the header and the tab bar (so it fits the measured height below the HA toolbar), scrolls when it is taller than that, and closes on a tab tap or the ✕.
+- **Fixed mode (default).** The panel is a mixer: one volume slider per room, nothing else. Every call goes to `entity`, exactly as in 0.4.
+- **Dynamic mode.** "Play on" chips choose the target (remembered per device); joining, dropping and moving use Music Assistant only: `mass_queue.send_command` with `players/cmd/set_members` and `player_queues/transfer` (never `media_player.join` / `unjoin`). Players are read with `players/all`. A static MA sync group is shown as fixed (no join/drop). Each room shows what it is playing. Presets regroup and set volumes in one tap. Changes are optimistic, time out, revert with a toast on failure, and offer **Undo** for a few seconds. Dropping the leader of a playing group is blocked by default (`leader_drop: allow` lets MA re-form it on the next room: Music Assistant goes silent for about 6 s, and the panel says "Regrouping…" until the group plays again). For dynamic MA groups the panel also offers MA's own default line-up as a "<Group> default" preset. Moving music to another target has a silence of about 5 s on the new target.
+- **Permissions are a UI lock, not security.** `grouping` / `grouping_users` / `guest_access` only hide or disable controls in this card. Anyone with dashboard access can still call the same services from elsewhere in Home Assistant. Use HA users and dashboards to restrict access.
+- **Quiet hours** cap every volume slider (panel and Now Playing) at `max_volume` during the window; guests only unless `applies: everyone`.
+- **Editor:** a Speakers section (mode, targets, grouping, grouping users, guest access, leader drop, presets, quiet hours) and `large_buttons` under Display. A 0.4 config opens without the editor writing any speaker keys.
 
 ## Browse
 
@@ -325,7 +357,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
   - Holding backspace clears the query.
   - Keys fire on release (pointerup), so a touch that slides off a key does not type.
   - In portrait you can hide the keyboard with its handle; a "Keyboard" button brings it back.
-- **Focus.** No keyboard ever pops up: there is no input, textarea or contenteditable element anywhere. Every button is `tabindex=-1` and calls `preventDefault` on pointerdown. A focusin guard blurs anything editable.
+- **Focus.** No keyboard ever pops up: there is no input, textarea or contenteditable element anywhere. Every button is `tabindex=-1` and calls `preventDefault` on pointerdown, except the active bottom tab (0.5.0), which is the tab bar's one keyboard stop: ←/→/Home/End switch tabs. A focusin guard blurs anything editable.
 
 
 **Radio, audiobooks and podcasts.** These groups (and their filter chips) are hidden whenever they come back empty. With Radio Browser in Music Assistant, stations appear in search results (`radiobrowser://radio/<uuid>`) and in Browse > Radio. Try it in the harness with `?radio=1` or `?radio=lib`.
@@ -365,6 +397,13 @@ This card is a front end; the real work is done by these projects:
 This project is not affiliated with or endorsed by Music Assistant, Home Assistant, WiiM, Apple or Genius. All trademarks belong to their owners.
 
 ## Changelog
+
+### 0.5.0
+- Speakers panel from the header status: a volume mixer by default (`speaker_mode: fixed`, 0.4 configs unchanged), or dynamic grouping, moving and presets through Music Assistant (`players/cmd/set_members`, `player_queues/transfer`).
+- Guests get volume only; quiet hours cap volume; each room shows what it plays; `large_buttons`. Permissions are a UI lock, not security.
+- Queue rows: Play now (asks first), Play next, Move up / down and Remove with Undo; on phones Play next and Remove stay on the row and ⋯ opens the rest. Play now only jumps to the item; it never re-sorts or clears the queue.
+- Redesigned tab bar: a segmented bar with the active tab as a solid white segment, larger labels, compact on short screens, and keyboard support (←/→/Home/End).
+- See [CHANGELOG.md](CHANGELOG.md).
 
 ### 0.4.2
 - Fix: the bottom tabs were cut off (and could not be scrolled to) on regular monitors such as a 1024x666 browser window. The card now measures the space below the Home Assistant toolbar and fits exactly, with the toolbar shown or hidden, the sidebar open or closed, in kiosk or full screen, and at any browser zoom.

@@ -310,11 +310,15 @@ const expectedCur = (pg, sel) => pg.evaluate((s) => {
   await open(sv, '&tab=now&saver=0.02');
   await sv.waitForFunction((s) => !!eval(s), { timeout: 6000 }, SEL.saver).catch(() => {});
   await sleep(800);
-  const three = await sv.evaluate((s) => { const el = eval(s); if (!el) return null; const r = el.shadowRoot; return { n: r.querySelectorAll('.three .ln').length, cur: r.querySelector('.three .ln.cur')?.textContent }; }, SEL.saver);
-  check('V1 screensaver shows previous / current / next line when synced', three?.n === 3 && !!three.cur, J(three));
+  // 0.5.0: a clipped window over a column of every line; the column slides up so the current line sits in the middle slot
+  const three = await sv.evaluate((s) => { const el = eval(s); if (!el) return null; const r = el.shadowRoot, w = r.querySelector('.win')?.getBoundingClientRect();
+    const vis = [...r.querySelectorAll('.win > .col > .ln')].filter((l) => { const b = l.getBoundingClientRect(); return w && b.bottom > w.top + 4 && b.top < w.bottom - 4; });
+    const c = r.querySelector('.win > .col > .ln.cur');
+    return { n: vis.length, cur: c?.textContent, mid: !!c && vis.indexOf(c) === 1 }; }, SEL.saver);
+  check('V1 screensaver shows previous / current / next line when synced (current in the middle slot)', three?.n === 3 && !!three.cur && three.mid, J(three));
   await sv.evaluate(() => __playTrack('Dreams', 120)); await sleep(800);
-  const plain = await sv.evaluate((s) => !!eval(s)?.shadowRoot.querySelector('.m-saver.st-plain .sc'), SEL.saver);
-  check('V2 screensaver shows a slow-scrolling plain block for unsynced lyrics', plain);
+  const plain = await sv.evaluate((s) => !!eval(s)?.shadowRoot.querySelector('.m-saver.st-plain .win > .col'), SEL.saver);
+  check('V2 screensaver shows a slow-moving plain block (window + column) for unsynced lyrics', plain);
   await open(sv, '&tab=now&saver=0.02&lyrics=none');
   await sleep(2200);
   check('V3 screensaver without lyrics looks like before (no lyrics element)', await sv.evaluate(() => !!__card.shadowRoot.querySelector('.sv, .saver, [class*=sv-]') && !__card.shadowRoot.querySelector('jb-lyrics[mode=saver]')));
@@ -379,6 +383,86 @@ const expectedCur = (pg, sel) => pg.evaluate((s) => {
   const t2 = (await svLabel(sv)).text;
   check('V13 status line updates live: "Looking for lyrics…" then "No lyrics"', t1 === 'Looking for lyrics…' && t2 === 'No lyrics', J([t1, t2]));
   await sv.close();
+}
+
+// ---------------- 7b. direction: lyrics always move UP (0.5.0) ----------------
+// Every surface, synced and plain: advance the mock across 3+ line changes (synced) or 3+ progress steps (plain), sample
+// every frame with getBoundingClientRect and assert the lines only ever move upward on screen (the saver: relative to
+// its slow burn-in drift block, which may drift down on its own), and that new lines come in from the bottom.
+{
+  const DSEL = { overlay: SEL.ovl, tab: SEL.tab, stage: SEL.stage, saver: SEL.saver };
+  async function direction(surface, kind, { rm = false } = {}) {
+    const pg = await newPage(surface === 'stage' ? { width: 1920, height: 1080 } : { width: 1280, height: 800 });
+    if (rm) await pg.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+    const q = surface === 'tab' ? '&tab=lyrics' : surface === 'overlay' ? '&tab=now&overlay=1' : surface === 'saver' ? '&tab=now&saver=0.02' : '&tab=now';
+    await open(pg, q);
+    await pg.evaluate((t) => __playTrack(t, 20), kind === 'plain' ? 'Dreams' : 'So What');
+    if (surface === 'stage') { await sleep(300); await pg.evaluate(() => __card.openStage()); }
+    const ok = await waitStatus(pg, DSEL[surface], kind, 12000);
+    await sleep(1200);
+    await pg.evaluate((s) => {
+      window.__fr = []; let last = -1e9; window.__stopFr = false;
+      const tick = () => {
+        const now = performance.now();
+        if (now - last >= 16) { last = now; const el = eval(s); if (el) {
+          const r = el.shadowRoot, sc = r.querySelector('.sc'), col = r.querySelector('.win > .col'), drift = __card.shadowRoot.querySelector('.sv-drift');
+          const dy = drift ? drift.getBoundingClientRect().top : 0;
+          __fr.push({ cur: Number(el.dataset.cur), st: sc ? sc.scrollTop : null, cy: col ? Number(col.dataset.y ?? NaN) : null,
+            lines: [...r.querySelectorAll('.ln[data-i]')].map((l) => { const b = l.getBoundingClientRect(); return [l.dataset.i, b.top, b.top - dy]; }) });
+        } }
+        if (!window.__stopFr) requestAnimationFrame(tick);
+      }; requestAnimationFrame(tick);
+    }, DSEL[surface]);
+    const seek = (p) => pg.evaluate((p) => __hass.callService('media_player', 'media_seek', { seek_position: p }, { entity_id: 'media_player.everywhere' }), p);
+    if (kind === 'synced') {
+      const L = await pg.evaluate(() => __card.lyrics.state.lines.map((l) => l.t));
+      let k = Math.max(1, await cur(pg, DSEL[surface]));
+      for (let n = 0; n < 3; n++) { k += 1; if (k % 8 === 7) k += 1; await seek(L[k] - 1.4); await sleep(2000); }
+    } else for (const p of [50, 90, 130, 170]) { await seek(p); await sleep(2300); }
+    const fr = await pg.evaluate(() => { window.__stopFr = true; return __fr; });
+    await pg.close();
+    // per frame, per line (matched by data-i): on-screen dy and dy relative to the drift block
+    let up = 0, down = 0, maxDownRel = 0, maxDownScr = 0, changes = 0, fromBelow = 0;
+    for (let i = 1; i < fr.length; i++) {
+      const a = new Map(fr[i - 1].lines.map((l) => [l[0], l]));
+      const ds = [], dr = [];
+      for (const l of fr[i].lines) { const p = a.get(l[0]); if (p) { ds.push(l[1] - p[1]); dr.push(l[2] - p[2]); } }
+      if (dr.length) { const m = dr.sort((x, y) => x - y)[dr.length >> 1]; if (m < 0) up -= m; else down += m; maxDownRel = Math.max(maxDownRel, m); }
+      if (ds.length) maxDownScr = Math.max(maxDownScr, ds.sort((x, y) => x - y)[ds.length >> 1]);
+      if (fr[i].cur !== fr[i - 1].cur && fr[i].cur >= 0) {
+        changes++;
+        // the new current line is below where it settles (it comes in from the bottom and moves up)
+        const key = String(fr[i].cur), y0 = fr[i - 1].lines.find((l) => l[0] === key)?.[2], end = fr[Math.min(fr.length - 1, i + 50)].lines.find((l) => l[0] === key)?.[2];
+        if (y0 != null && end != null && y0 > end + 4) fromBelow++;
+      }
+    }
+    const mono = (xs) => xs.filter((x) => x != null && !Number.isNaN(x)).every((x, i, arr) => !i || x >= arr[i - 1] - 0.5);
+    return { ok, frames: fr.length, up: Math.round(up), down: +down.toFixed(1), maxDownRel: +maxDownRel.toFixed(2), maxDownScr: +maxDownScr.toFixed(2), changes, fromBelow,
+      scrollMono: mono(fr.map((f) => f.st)), colMono: mono(fr.map((f) => f.cy)) };
+  }
+  for (const surface of ['overlay', 'stage', 'tab', 'saver']) for (const kind of ['synced', 'plain']) {
+    const d = await direction(surface, kind);
+    // the saver's drift block may move down by itself (< 1 px a frame); everything else never moves down at all
+    const scrOk = surface === 'saver' ? d.maxDownScr < 1 : d.maxDownScr <= 0.5;
+    const enough = kind === 'synced' ? d.changes >= 3 && d.fromBelow >= 3 && d.up > 100 : d.up > 100;
+    check(`D ${surface} ${kind}: lines only move up (${kind === 'synced' ? '3+ line changes, new lines come in from the bottom' : '3+ progress steps'})`,
+      d.ok && enough && d.maxDownRel <= 0.5 && scrOk && d.scrollMono && d.colMono, J(d));
+  }
+  // reduced motion: the saver column still steps upward (instantly, no transition)
+  for (const kind of ['synced', 'plain']) {
+    const d = await direction('saver', kind, { rm: true });
+    check(`D saver ${kind}, prefers-reduced-motion: moves up in instant steps, never down`, d.ok && d.up > 100 && d.maxDownRel <= 0.5 && d.colMono, J(d));
+  }
+  // .rm (the card mirrors reduced motion onto ha-card) turns the column transition off
+  {
+    const pg = await newPage();
+    await pg.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+    await open(pg, '&tab=now&saver=0.02');
+    await waitStatus(pg, SEL.saver, 'synced', 8000);
+    const tr = await pg.evaluate((s) => { const c = eval(s).shadowRoot.querySelector('.win > .col'); const cs = getComputedStyle(c); return { dur: cs.transitionDuration, rm: !!__card.shadowRoot.querySelector('.rm') }; }, SEL.saver);
+    check('D saver: reduced motion → no slide transition on the column', tr.dur.split(',').every((x) => parseFloat(x) === 0), J(tr));
+    await pg.close();
+  }
 }
 
 // ---------------- 8. editor ----------------
