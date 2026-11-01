@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag like v0.3.0 to build and publish a GitHub release.
-# HACS installs dist/jukebox-card.js from the latest release (see hacs.json).
+# HACS installs the release asset(s) from the latest release (see hacs.json).
 on:
   push:
     tags:

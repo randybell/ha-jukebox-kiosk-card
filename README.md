@@ -2,18 +2,6 @@
 
 This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox kiosk. It uses the Black Frame Mono look: black header and footer, the album art blurred behind the centre, white active buttons and light-white inactive ones.
 
-![Now Playing at 1920x1080](docs/now-1920x1080.png)
-
-| Search (on-screen keyboard, results per keystroke) | Queue |
-|---|---|
-| ![Search](docs/search-1920x1080.png) | ![Queue](docs/queue-1920x1080.png) |
-| **Browse** | **Screensaver** |
-| ![Browse](docs/browse-1920x1080.png) | ![Screensaver](docs/screensaver-1920x1080.png) |
-| **Portrait tablet (820x1180)** | **Phone (390x844)** |
-| ![Portrait](docs/now-820x1180.png) | ![Phone](docs/search-390x844.png) |
-| **Browse > Radio (1280x800)** | **Album with durations (1280x800)** |
-| ![Radio](docs/browse-radio-1280x800.png) | ![Album](docs/browse-album-1280x800.png) |
-
 **What it has:**
 - all five tabs: **Now Playing**, **Browse**, **Search**, **Queue** and **Lyrics**
 - lyrics from Music Assistant (synced or plain) on the art, a full-screen Stage, the Lyrics tab and the screensaver (see [Lyrics](#lyrics))
@@ -24,89 +12,30 @@ This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox ki
 
 Search has no text input. You type on the on-screen keyboard, which works like the YouTube app on Android TV or a TouchTunes jukebox, and the results update on every keystroke.
 
-Nothing in this repository talks to a real Home Assistant server. Development and tests run against `dev/mock-hass.js`.
-
 The repository is `randybell/ha-jukebox-kiosk-card`. The card's element is `custom:jukebox-card`, and its file is `jukebox-card.js`.
 
-## Build
+Version history is in [CHANGELOG.md](CHANGELOG.md). Building, tests and releases are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-```bash
-# lit 3, rollup 4, typescript 5.9 (TS 7 breaks @rollup/plugin-typescript), fontsource
-npm ci                # or npm install
-npm run build         # -> dist/jukebox-card.js (single ES module) + dist/fonts/*
-npm run watch         # rebuild on change
-npm run typecheck     # tsc --noEmit
-```
+## Screenshots
 
-## Dev harness and tests (no Home Assistant needed)
+![Now Playing at 1920x1080](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/now-1920x1080.png)
 
-```bash
-python3 -m http.server 8765 --bind 127.0.0.1     # from the project root; the harness won't run from file://
-# open http://127.0.0.1:8765/dev/index.html?log=1
-npm test                                           # run.mjs (156 end-to-end checks) + lyrics unit tests (51) + lyrics end-to-end checks (84) + speakers unit tests (35) + speakers end-to-end checks (137) (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
-node test/shots-m2.mjs f1                          # every tab at 1920x1080, 1280x800, 820x1180 and 390x844 -> test/shots/m2/
-JB_SIZES=1920x1080 node test/shots-m2.mjs x1 '&backdrop=light'   # one size, one mode
-node test/shots-v040.mjs                           # lyrics surfaces, states and the editor at 1280x800, 1920x1080, 390x844 -> test/shots/v040/
-node test/shots-v050.mjs                           # speakers panel (fixed, dynamic, guest, presets, move, large buttons), queue row icons and the segmented tab bar at 390x844, 1280x800, 1920x1080 and 1024x666 below the HA toolbar -> test/shots/v050/
-npm run test:fit                                   # fit-to-height checks: 11 sizes x HA toolbar / kiosk / full screen, every tab, sidebar, resize, emulated Mac Chrome zoom, 0.5.0 Speakers panel / large buttons / queue overlays -> test/shots/v042/
-node test/perf.mjs 3                               # frame-time benchmark, see "Backdrop and performance"
-```
-
-`dev/mock-hass.js` is a fake `hass`. It uses the shapes from the real exports (`dev/fixtures/`):
-- `search` always returns the 7 lists.
-- Items carry no provider field; the provider comes from the URI scheme (`library://`, `apple_music://`, `apple_music--XXXXXXXX://`).
-- `get_library` returns `{items, limit, offset, order_by, media_type}` with `library://` URIs.
-- `mass_queue.get_queue_items` returns a list keyed by entity.
-- `mass_queue.get_album_tracks` / `get_playlist_tracks` return the real 0.10.x shape (`{tracks: [{media_title, media_artist, media_album_name, media_content_id, media_image, duration, favorite, position}]}`); `library://album/1448` and `library://playlist/158` answer with the real exports in `dev/fixtures/mass-queue-tracks-sample.json`.
-- The player has an absolute `entity_picture` (`http://<ma-host>:8095/imageproxy?…`) and a relative `entity_picture_local`, as on the real system.
-- The fixtures are scrubbed: provider instance ids are `--XXXXXXXX`, HA context ids are placeholders and `user_id` is `null`.
-- `play_media` is rejected unless the target is `media_player.everywhere`.
-- Every service call changes the mock state and pushes a new `hass`, as HA does.
-
-URL parameters:
-
-| Parameter | Effect |
+| Search (on-screen keyboard, results per keystroke) | Queue |
 |---|---|
-| `latency=ms` / `jitter=ms` | reply latency and its random variation |
-| `mode=inverse` | shorter queries reply more slowly, which forces out-of-order replies |
-| `fail=1` | the mock search fails |
-| `real=1` | search returns the real "eagles" export from `dev/fixtures/ma-search-sample.json` |
-| `radio=1` | Radio Browser stations in search only (library radio stays empty, so Browse > Radio uses the search fallback) |
-| `radio=lib` | the same stations also in the library (`get_library media_type: radio`) |
-| `mqpage=all\|paged\|ignore` | how `get_*_tracks` treats `page`: `all` (default, mass_queue 0.10: page 0 = everything), `paged` (50 per page), `ignore` (every page returns the same list) |
-| `noart=1` | the player has no `entity_picture_local`, so art falls back to the queue item's https image |
-| `legacyq=1` | configures the old `queue_config_entry_id` key instead of `mass_queue_entry_id` |
-| `idle=1` / `paused=1` | nothing playing / paused |
-| `empty=1` | empty library and queue |
-| `qfail=1` | `mass_queue.get_queue_items` fails |
-| `noqueue=1` | no `mass_queue_entry_id`, so drill-down uses the search fallback |
-| `saver=min` | `screensaver_minutes`; for example `saver=0.05` is 3 seconds |
-| `recents=1` | seeds the recent-search chips |
-| `fresh=1` | clears localStorage |
-| `log=1` | shows a panel with every `callService` call |
-| `tab=now\|browse\|search\|queue\|lyrics` | opens that tab (default `now`) |
-| `lyrics=none` | every lyrics lookup finds nothing |
-| `lyrfail=perm\|err` | lyrics lookups fail with a permission error / a generic error |
-| `lyrlat=ms` | lyrics reply latency (the live first lookup takes 8–33 s) |
-| `overlay=1\|0` | preset the art lyrics overlay toggle |
-| `keeplyrics=1` | with `fresh=1`, keep the lyrics cache |
-| `admin=1`, `user=<name>`, `uid=<id>` | the HA user (default: a non-admin guest) |
-| `spk=dyn`, `target=<entity>`, `cfg=<json>` | dynamic speaker mode, the starting target, extra card config (merged last) |
-| `ma=split\|busy`, `grp=` / `xfer=fail\|slow\|timeout`, `gap=ms`, `malat=ms` | mock Music Assistant situations and failures (`dev/mock-ma.js`, log in `window.__maLog`) |
-| `qbuf=1`, `qadd=fail`, `qitems=fail` | next track already buffered in MA; queue re-add / item lookup fails (Remove → Undo) |
-| `cfg=<json>` | merged into the card config |
-| `backdrop=auto\|full\|light\|static\|off` | sets the `backdrop` option |
-| `ha=toolbar\|kiosk\|masonry` | emulates a Home Assistant view around the card: fixed 56 px toolbar (`--header-height`), toolbar hidden (kiosk mode), or a masonry view with padding and a card above |
-| `sidebar=open\|narrow\|closed\|none` | with `ha=`, the HA sidebar width (256 px, 56 px, or none; default `narrow`) |
-
-Every call is recorded in `window.__calls`, except read-only lyrics lookups (`mass_queue.send_command`), which go to `window.__lyricsLog`. `window.__setNowPlaying({artist, title, radio, uri, duration, position})` and `window.__playTrack(name, position)` change what is playing. `test/run.mjs` drives the card with real CDP mouse, touch and keyboard input and writes `test/shots/results.json`. The browser tests are hermetic (`test/intercept.mjs`): `/api/media_player_proxy/…` and https images are answered with a generated SVG, and any request to a plain-http host other than the dev server fails (test 16o checks that the card never asks the MA host directly).
+| ![Search](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/search-1920x1080.png) | ![Queue](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/queue-1920x1080.png) |
+| **Browse** | **Screensaver** |
+| ![Browse](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/browse-1920x1080.png) | ![Screensaver](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/screensaver-1920x1080.png) |
+| **Portrait tablet (820x1180)** | **Phone (390x844)** |
+| ![Portrait](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/now-820x1180.png) | ![Phone](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/search-390x844.png) |
+| **Browse > Radio (1280x800)** | **Album with durations (1280x800)** |
+| ![Radio](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/browse-radio-1280x800.png) | ![Album](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/browse-album-1280x800.png) |
 
 ## Requirements
 
 - **Home Assistant** with a dashboard you can add a custom card to.
-- **Music Assistant**: a running Music Assistant server and the official **Music Assistant** integration in Home Assistant (`music_assistant`). Search, Browse, transport, volume and every `play_media` go through it.
-- **A player Music Assistant can play to**: WiiM speakers (what this card was built with) or any other Music Assistant player. Group players such as `media_player.everywhere` work too.
-- **mass_queue** (Music Assistant Queue Actions), installed from HACS: needed for track lists and lyrics. Set `mass_queue_entry_id` in the card config.
+- **[Music Assistant](https://music-assistant.io)**: a running Music Assistant server and the official **Music Assistant** integration in Home Assistant (`music_assistant`). Search, Browse, transport, volume and every `play_media` go through it.
+- **A player Music Assistant can play to**: any Music Assistant player. Group players such as `media_player.everywhere` work too.
+- **[mass_queue](https://github.com/droans/mass_queue)** (Music Assistant Queue Actions), installed from HACS: needed for track lists and lyrics. Set `mass_queue_entry_id` in the card config.
 
 Without mass_queue the card still works for search, the Browse grid, transport, volume, rooms and playing anything through `music_assistant`, but:
 - album and artist pages fall back to search ("matched by search") instead of the real track lists, and playlist pages show a note instead of their tracks (Play and Shuffle still work);
@@ -114,37 +43,40 @@ Without mass_queue the card still works for search, the Browse grid, transport, 
 - lyrics show "Lyrics unavailable".
 - 0.5.0: the Speakers panel's dynamic mode (grouping, moving music, presets) and the queue row icons (Play now, Play next, Remove with Undo) are not available; the fixed-mode volume mixer still works.
 
-## Install on Home Assistant (nothing here touches your server)
+## Install
 
-### HACS
+Nothing in this repository is applied to your Home Assistant server by cloning it. A listing in the HACS default store is pending. Until then, add this as a custom repository, or copy the release files in by hand.
+
+### HACS (custom repository)
 
 1. HACS → ⋮ → **Custom repositories** → `https://github.com/randybell/ha-jukebox-kiosk-card`, category **Dashboard**.
-2. Install **Jukebox Card**. HACS downloads `jukebox-card.js` from the latest GitHub release (built by `.github/workflows/release.yml` when a `v*` tag is pushed) and adds the resource `/hacsfiles/ha-jukebox-kiosk-card/jukebox-card.js`.
-3. Fonts: HACS only downloads `.js` files, so without fonts the card uses the system UI font. For the intended Inter / Plus Jakarta Sans, unzip `jukebox-card-fonts.zip` from the same release into `/config/www/jukebox/fonts/` and set `font_base: /local/jukebox/fonts`.
+2. Install **Jukebox Card**. HACS downloads all of the latest release's assets into `/config/www/community/ha-jukebox-kiosk-card/` and adds the resource `/hacsfiles/ha-jukebox-kiosk-card/jukebox-card.js`. The release is built by `.github/workflows/release.yml` when a `v*` tag is pushed (see [Development](docs/DEVELOPMENT.md)).
+3. **Fonts.** HACS does not unzip `jukebox-card-fonts.zip`. The card loads Inter and Plus Jakarta Sans from a `fonts/` folder next to `jukebox-card.js`, or from `font_base` if that option is set. Unzip the archive so the woff2 files are in `/config/www/community/ha-jukebox-kiosk-card/fonts/`. If that folder is missing and `font_base` is not set, the card falls back to system fonts.
 
 ### Manual
 
-1. Download `jukebox-card.js` and `jukebox-card-fonts.zip` from a release (or run `npm run build`) and put them in `/config/www/jukebox/` as `jukebox-card.js` and `fonts/`.
+1. Download `jukebox-card.js` and `jukebox-card-fonts.zip` from a release (or run `npm run build`). Put `jukebox-card.js` in `/config/www/jukebox/` and unzip the fonts archive into `/config/www/jukebox/fonts/`.
 2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.5.0`, type **JavaScript module**.
    - Change `?v=` on every update, or Fully Kiosk will keep the old file.
-   - Fonts are found in `fonts/` next to the `.js` automatically.
+   - Fonts are found in `fonts/` next to the `.js` automatically. Set `font_base` if they live somewhere else. `font_base: false`, or a missing `fonts/` folder, uses system fonts.
 
-### Dashboard
+## Configuration
 
-Make a dashboard with a single **panel** view:
+Add the card to a dashboard. A single **panel** view is the layout it is built for. Entity ids in the example are labeled `example:`. Keys you leave out use the defaults in [Options](#options); those defaults are unchanged.
 
 ```yaml
+# Example configuration. Entity ids below are examples; replace them with yours.
 views:
   - title: Jukebox
     path: jukebox
     type: panel
     cards:
       - type: custom:jukebox-card
-        entity: media_player.everywhere                # MA group player; every play_media goes here
+        entity: media_player.everywhere                # example: Music Assistant group player; every play_media goes here
         config_entry_id: <music assistant entry id>    # Settings → Devices & services → Music Assistant (id is in the URL)
         mass_queue_entry_id: <mass_queue entry id>     # optional, enables album/artist/playlist track lists
-        favorite_entity: button.everywhere_favorite_current_song
-        rooms:
+        favorite_entity: button.everywhere_favorite_current_song  # example
+        rooms:                                         # example
           - { name: Living Room, entity: media_player.living_room }
           - { name: Kitchen,     entity: media_player.kitchen }
           - { name: Garage,      entity: media_player.garage }
@@ -154,46 +86,9 @@ views:
         backdrop: auto                                 # full | light | static | off | auto
 ```
 
-### Options
+The rest of this section is how each part of the card behaves.
 
-| key | default | |
-|---|---|---|
-| `entity` | `media_player.everywhere` | Player for transport, the Everywhere volume, the queue and every `play_media` |
-| `config_entry_id` | (required) | MA config entry for `music_assistant.search` / `get_library` |
-| `rooms` | `[]` | `[{name, entity, icon?}]`, or bare entity ids (the name then comes from `friendly_name`). Each room gets its own volume slider |
-| `favorite_entity` | `button.everywhere_favorite_current_song` | Pressed by the heart (button, input_button or script). `''` hides the heart |
-| `mass_queue_entry_id` | — | mass_queue (Music Assistant Queue Actions) config entry, used for `mass_queue.get_album_tracks / get_artist_tracks / get_playlist_tracks` and for lyrics (`mass_queue.send_command`). The 0.3.0 name `queue_config_entry_id` is still accepted, and the visual editor rewrites it to the new key |
-| `screensaver_minutes` | `10` (0–1440) | Idle minutes before the screensaver. `0` turns it off. The editor offers Off, 1, 5, 10, 15, 30, 60 and Custom; any 0–1440 value from YAML still loads |
-| `browse_limit` | `60` (1–500) | Items per Browse page (infinite scroll pages by `offset`) |
-| `queue_limit` | `200` (1–1000) | Upcoming items requested from `get_queue_items` (`limit_after`); out-of-range values are clamped |
-| `limit` | `8` (1–50) | Search results per type. 1-character queries always use 5 |
-| `default_tab` | `now` | `now`, `browse`, `search`, `queue` or `lyrics`. A tab that is turned off (or unknown) is ignored and Now Playing opens |
-| `library_only` | `false` | Search only the MA library |
-| `slow_ms` | `800` | Search replies slower than this switch on in-flight limiting |
-| `accent` | `mono` | Only `mono` exists so far |
-| `font_base` | `fonts/` next to the `.js` | Location of the woff2 files. `false` uses system fonts |
-| `height` | fits the window | Card height. By default the card fills the space from its top edge to the bottom of the window (below the HA toolbar, minimum 320 px); set a fixed value such as `700px` to override |
-| `backdrop` | `auto` | `full`, `light`, `static`, `off` or `auto`. See [Backdrop and performance](#backdrop-and-performance) |
-| `scale` | `auto` | Large-screen zoom. `auto` scales the whole UI by min(width/1420, height/800) once that is ≥ 1.15 (1920x1080 → 1.35, capped at 1.8). A number forces it; `1` turns it off |
-| `title` | `Jukebox` | Brand text in the header |
-| `show_lyrics` | `true` | Master switch for lyrics: art overlay toggle, Stage, Lyrics tab and screensaver lyrics. Needs `mass_queue_entry_id` |
-| `lyrics_tab` | `true` | Show the 5th **Lyrics** tab |
-| `screensaver_lyrics` | `true` | Previous / current / next line (synced) or a slow scroll (plain) on the screensaver |
-| `lyrics_seek` | `true` | Long-press (0.55 s) a synced line to seek there. Never on radio |
-| `lyrics_offset_ms` | `500` (−5000–5000) | Shift for synced lyrics; positive shows lines sooner |
-| `speaker_mode` | `fixed` | `fixed`: always play on `entity`; the Speakers panel is a volume mixer and a 0.4 config makes exactly the same calls. `dynamic`: pick where to play, group, move and use presets. See [Speakers](#speakers-050) |
-| `targets` | all MA players | `dynamic` only: `[{entity, name?, members?}]` or entity ids the card may play on |
-| `grouping` | `admins` | Who may group, move, pick the target and use the queue's Play now / Play next / Remove icons: `admins`, `everyone` or `nobody`. **A UI lock, not security** |
-| `grouping_users` | `[]` | Extra users (name or user id) treated like admins for the above |
-| `guest_access` | `volume` | Everyone else in the Speakers panel: `volume` or `none` (read only) |
-| `leader_drop` | `block` | Dropping the leader of a playing group: `block`, or `allow` (MA re-forms the group on the next room after about 6 s of silence; the panel shows "Regrouping…") |
-| `presets` | `[]` | `[{name, members: [room entities], volumes?: {entity: percent}, target?}]` (`dynamic`) |
-| `quiet_hours` | — | `{start: 'HH:MM', end: 'HH:MM', max_volume: percent, applies?: guests\|everyone}` caps volume sliders; `start === end` means all day. Guests only by default |
-| `large_buttons` | `false` | Bigger touch targets and text everywhere |
-
-The visual editor covers entity, config entry, rooms (an entity list that keeps existing names), favorite entity and mass_queue entry; a **Display** section (screensaver presets Off / 1 / 5 / 10 / 15 / 30 / 60 min plus Custom, screensaver lyrics, default tab, backdrop, accent); a **Lyrics** section (lyrics, Lyrics tab, long-press seek, offset); and an Advanced section (browse limit and the rest). Options you leave at their defaults are not written to YAML, and existing 0.3.x configs load unchanged.
-
-## Backdrop and performance
+### Backdrop and performance
 
 The full look puts a 38 px live blur of the album art behind the whole centre and a `backdrop-filter` blur behind every panel (14–18 px). That is cheap on a desktop GPU but expensive on low-end kiosk tablets, because the blurred layers have to be re-rastered whenever anything on top of them changes (a slider knob, a key press, a new search result). The `backdrop` option picks a cheaper look:
 
@@ -222,7 +117,7 @@ The full look puts a 38 px live blur of the album art behind the whole centre an
 | keyboard typing, `full` | 16.8 | 16.8 | 44.5 | 0.3% | 0 | 1701 | 1438 |
 | keyboard typing, `light` | 16.8 | 16.7 | 33.3 | 0% | 0 | 1706 | 407 |
 
-![Backdrop modes: full, light, static, off](docs/backdrop-modes-1920x1080.png)
+![Backdrop modes: full, light, static, off](https://raw.githubusercontent.com/randybell/ha-jukebox-kiosk-card/main/docs/backdrop-modes-1920x1080.png)
 
 *Top: `full`, `light`. Bottom: `static`, `off`.*
 
@@ -230,11 +125,11 @@ The full look puts a 38 px live blur of the album art behind the whole centre an
 - The main thread is not the bottleneck in either mode: no long tasks and a steady ~16.7 ms at 4x throttle. The blur cost is in raster/GPU work, which CPU throttling does not slow down, and on this box's fast CPU it still fits in a frame. The useful number is raster/GPU time, which is where a slow tablet's GPU drops frames. Typing (results re-rendering over a blurred backdrop) costs about 3.5x more raster/GPU time in `full` than in `light`.
 - Re-check on the real tablet: open the dashboard with `backdrop: full`, then `light`, and compare how smooth the volume drag and typing feel. If `auto` picked `full` on a weak tablet, set `backdrop: light` explicitly.
 
-## Large screens (1920x1080)
+### Large screens (1920x1080)
 
 The layout is designed around a 1280x800 tablet. On larger screens the whole card is zoomed (CSS `zoom`, set from a `ResizeObserver`) so the art, text and touch targets grow, rather than spreading out with empty space. At 1920x1080 the zoom is 1.35, which gives the 1280x800 layout's proportions at full resolution. Popover menus correct their position for the zoom (`localRect` in `src/shared.ts`; test 15k). Use `scale: 1` to turn this off, or a number to force a size.
 
-## Now Playing
+### Now Playing
 
 - **Art.** The card never loads the player's absolute `entity_picture` (`http://<ma-host>:8095/imageproxy?…` is mixed content on an https dashboard and unreachable off the LAN). It uses, in order: `entity_picture_local` (HA's relative `/api/media_player_proxy/…` URL), a relative `entity_picture`, the current mass_queue item's https `media_image`, then the placeholder. The same URL feeds Now Playing, both backdrops (`full` and `light`) and the screensaver. Radio streams with no art get a radio-tower image. Item images are used only when they are https, `data:image` or relative.
 - **Display.** The album art is blurred behind the card. The tab shows the art, title, artist · album, a provider badge from the URI scheme and "Playing on Everywhere".
@@ -261,7 +156,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
   - The card never joins or unjoins players.
 - **Layouts.** In landscape the art is on the left; in portrait it sits on top, with rooms in a three-column grid on tablets. Phone layout applies at ≤520 px.
 
-## Queue (mass_queue 0.10.4)
+### Queue (mass_queue 0.10.4)
 
 - **Reading.** The queue comes from `mass_queue.get_queue_items {entity, limit_before: 1, limit_after: queue_limit (1–1000)}` with `return_response`. It refreshes when the tab opens, when the track, state or shuffle changes, and after every action.
 - **Layout.** The previous track is dimmed. "Now playing" is the highlighted white row, then a numbered "Up next" list. "+ N more in Music Assistant" appears when the queue is longer than the list.
@@ -277,7 +172,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
   - Tapping a row and the long-press menu keep the 0.4 behaviour.
   - The track Music Assistant is already loading (the one after the playing track, near its end) can't be moved or removed: those rows have no Play next / Remove and their Move buttons are off. If MA refuses anyway, the toast says "That track is already loading" and the queue reloads.
 
-## Speakers (0.5.0)
+### Speakers (0.5.0)
 
 - **Header status** ("Everywhere · 3 rooms synced", or "N speakers") opens the Speakers panel. The panel opens in the middle of the card, between the header and the tab bar (so it fits the measured height below the HA toolbar), scrolls when it is taller than that, and closes on a tab tap or the ✕.
 - **Fixed mode (default).** The panel is a mixer: one volume slider per room, nothing else. Every call goes to `entity`, exactly as in 0.4.
@@ -286,11 +181,11 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 - **Quiet hours** cap every volume slider (panel and Now Playing) at `max_volume` during the window; guests only unless `applies: everyone`.
 - **Editor:** a Speakers section (mode, targets, grouping, grouping users, guest access, leader drop, presets, quiet hours) and `large_buttons` under Display. A 0.4 config opens without the editor writing any speaker keys.
 
-## Browse
+### Browse
 
 - **Categories:** Playlists, Albums, Artists, Tracks, Radio, Podcasts and Audiobooks, plus a **Favorites** toggle.
   - Each call is `music_assistant.get_library {config_entry_id, media_type, favorite?, limit, offset, order_by}` with `return_response`.
-  - At start the card makes one `limit: 1` call per category and **hides the categories that are empty**, such as Radio, Podcasts and Audiobooks on the current system.
+  - At start the card makes one `limit: 1` call per category and **hides the categories that are empty**, such as Radio, Podcasts and Audiobooks when the library has none.
 - **Sort chip:** A–Z (`name`), then Recently added (`timestamp_added_desc`), then Recently played (`last_played_desc`). Radio sorts by Popular (`play_count_desc`; `get_library` has no popularity order, so this is your own play count), then A–Z.
 - **Layout.** Tile grid with provider badges; tracks show as rows. Pages are cached per category, favorite and sort, and load more on scroll.
 - **Tap never plays.** Artists, albums, playlists (and podcasts with mass_queue) open the detail view described under Search, with the same rows, icons and confirmations. Other tiles open a small sheet (Play next, Add to queue, Replace queue…, Start radio…). **Long-press** opens a menu: Open, Play next, Add to queue, Replace queue, Start radio (not shown for radio stations); Replace and Start radio confirm first.
@@ -302,15 +197,15 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
   - artists also get an Albums row from `music_assistant.search`
   - without `mass_queue_entry_id`, albums and artists fall back to a search, labelled "matched by search", and playlists show a note that mass_queue is needed
 - **Search's Open action** jumps to the same detail page.
-- **Target.** Every `play_media` goes to `media_player.everywhere`. The room players (WiiM) are only volume targets.
+- **Target.** Every `play_media` goes to the configured player (example: `media_player.everywhere`). Room players are volume targets.
 
-## Screensaver
+### Screensaver
 
 - **Start.** After `screensaver_minutes` with no touches or keys, a full-screen overlay appears: the current art with a slow Ken Burns zoom, and a big clock, date and the current track, all drifting slowly (240 s loop) to avoid burn-in.
 - **Reduced motion.** No zoom and no drift; the clock block jumps to a new spot every 60 s instead.
 - **Wake.** A tap wakes it. The tap is swallowed, so it never presses whatever is underneath, and the overlay fades out over 350 ms.
 
-## How search behaves
+### How search behaves
 
 - **Searches on every keystroke, backspace included, from 1 character.** There is no debounce and no minimum length.
 - **The call:**
@@ -362,7 +257,7 @@ The layout is designed around a 1280x800 tablet. On larger screens the whole car
 
 **Radio, audiobooks and podcasts.** These groups (and their filter chips) are hidden whenever they come back empty. With Radio Browser in Music Assistant, stations appear in search results (`radiobrowser://radio/<uuid>`) and in Browse > Radio. Try it in the harness with `?radio=1` or `?radio=lib`.
 
-## Lyrics
+### Lyrics
 
 Lyrics come from Music Assistant's own metadata (its LRCLIB provider, with Genius as an optional fallback) through **mass_queue**, so `mass_queue_entry_id` is required; without it the lyrics surfaces say "Lyrics unavailable".
 
@@ -379,12 +274,70 @@ Lyrics come from Music Assistant's own metadata (its LRCLIB provider, with Geniu
 - **Cache**: in-memory LRU (50 songs) plus `localStorage` (`jukebox-card:lyrics:v1`, 100 songs), keyed by URI (or `artist|title` for radio). Found lyrics are kept 30 days, "not found" 1 day.
 - **Look**: Black Frame Mono: the current line is white, the others translucent white, over whatever `backdrop` mode is active.
 
-## Credits
+## Options
+
+Entity ids in the [configuration example](#configuration) are examples. The defaults in this table are the card's defaults.
+
+| key | default | |
+|---|---|---|
+| `entity` | `media_player.everywhere` | Player for transport, the Everywhere volume, the queue and every `play_media` |
+| `config_entry_id` | (required) | MA config entry for `music_assistant.search` / `get_library` |
+| `rooms` | `[]` | `[{name, entity, icon?}]`, or bare entity ids (the name then comes from `friendly_name`). Each room gets its own volume slider |
+| `favorite_entity` | `button.everywhere_favorite_current_song` | Pressed by the heart (button, input_button or script). `''` hides the heart |
+| `mass_queue_entry_id` | — | mass_queue (Music Assistant Queue Actions) config entry, used for `mass_queue.get_album_tracks / get_artist_tracks / get_playlist_tracks` and for lyrics (`mass_queue.send_command`). The 0.3.0 name `queue_config_entry_id` is still accepted, and the visual editor rewrites it to the new key |
+| `screensaver_minutes` | `10` (0–1440) | Idle minutes before the screensaver. `0` turns it off. The editor offers Off, 1, 5, 10, 15, 30, 60 and Custom; any 0–1440 value from YAML still loads |
+| `browse_limit` | `60` (1–500) | Items per Browse page (infinite scroll pages by `offset`) |
+| `queue_limit` | `200` (1–1000) | Upcoming items requested from `get_queue_items` (`limit_after`); out-of-range values are clamped |
+| `limit` | `8` (1–50) | Search results per type. 1-character queries always use 5 |
+| `default_tab` | `now` | `now`, `browse`, `search`, `queue` or `lyrics`. A tab that is turned off (or unknown) is ignored and Now Playing opens |
+| `library_only` | `false` | Search only the MA library |
+| `slow_ms` | `800` | Search replies slower than this switch on in-flight limiting |
+| `accent` | `mono` | Only `mono` exists so far |
+| `font_base` | `fonts/` next to the `.js` | Location of the woff2 files. `false` uses system fonts |
+| `height` | fits the window | Card height. By default the card fills the space from its top edge to the bottom of the window (below the HA toolbar, minimum 320 px); set a fixed value such as `700px` to override |
+| `backdrop` | `auto` | `full`, `light`, `static`, `off` or `auto`. See [Backdrop and performance](#backdrop-and-performance) |
+| `scale` | `auto` | Large-screen zoom. `auto` scales the whole UI by min(width/1420, height/800) once that is ≥ 1.15 (1920x1080 → 1.35, capped at 1.8). A number forces it; `1` turns it off |
+| `title` | `Jukebox` | Brand text in the header |
+| `show_lyrics` | `true` | Master switch for lyrics: art overlay toggle, Stage, Lyrics tab and screensaver lyrics. Needs `mass_queue_entry_id` |
+| `lyrics_tab` | `true` | Show the 5th **Lyrics** tab |
+| `screensaver_lyrics` | `true` | Previous / current / next line (synced) or a slow scroll (plain) on the screensaver |
+| `lyrics_seek` | `true` | Long-press (0.55 s) a synced line to seek there. Never on radio |
+| `lyrics_offset_ms` | `500` (−5000–5000) | Shift for synced lyrics; positive shows lines sooner |
+| `speaker_mode` | `fixed` | `fixed`: always play on `entity`; the Speakers panel is a volume mixer and a 0.4 config makes exactly the same calls. `dynamic`: pick where to play, group, move and use presets. See [Speakers](#speakers-050) |
+| `targets` | all MA players | `dynamic` only: `[{entity, name?, members?}]` or entity ids the card may play on |
+| `grouping` | `admins` | Who may group, move, pick the target and use the queue's Play now / Play next / Remove icons: `admins`, `everyone` or `nobody`. **A UI lock, not security** |
+| `grouping_users` | `[]` | Extra users (name or user id) treated like admins for the above |
+| `guest_access` | `volume` | Everyone else in the Speakers panel: `volume` or `none` (read only) |
+| `leader_drop` | `block` | Dropping the leader of a playing group: `block`, or `allow` (MA re-forms the group on the next room after about 6 s of silence; the panel shows "Regrouping…") |
+| `presets` | `[]` | `[{name, members: [room entities], volumes?: {entity: percent}, target?}]` (`dynamic`) |
+| `quiet_hours` | — | `{start: 'HH:MM', end: 'HH:MM', max_volume: percent, applies?: guests\|everyone}` caps volume sliders; `start === end` means all day. Guests only by default |
+| `large_buttons` | `false` | Bigger touch targets and text everywhere |
+
+The visual editor covers entity, config entry, rooms (an entity list that keeps existing names), favorite entity and mass_queue entry; a **Display** section (screensaver presets Off / 1 / 5 / 10 / 15 / 30 / 60 min plus Custom, screensaver lyrics, default tab, backdrop, accent); a **Lyrics** section (lyrics, Lyrics tab, long-press seek, offset); and an Advanced section (browse limit and the rest). Options you leave at their defaults are not written to YAML, and existing 0.3.x configs load unchanged.
+
+## Troubleshooting
+
+- **Custom fonts do not load after a HACS install.** HACS puts every release asset in `/config/www/community/ha-jukebox-kiosk-card/`, including `jukebox-card-fonts.zip`, and does not unzip it. Unzip that archive into a `fonts/` folder next to `jukebox-card.js`, or set `font_base` to the folder that holds the woff2 files. With neither, the card uses system fonts.
+- **The Queue tab says "Queue unavailable".** [mass_queue](https://github.com/droans/mass_queue) is not installed, or the player entity is not a Music Assistant player.
+- **Lyrics say "Lyrics unavailable", or album and artist pages say "matched by search".** Set `mass_queue_entry_id` to the mass_queue config entry (not the Music Assistant one). A permission note means this Home Assistant user may not be allowed to run `mass_queue.send_command`. Playlist pages need the same entry to list tracks. Play and Shuffle still work without it.
+- **The Speakers panel will not group or move playback, and the queue row icons are missing.** Dynamic mode and those icons need `mass_queue_entry_id`. Fixed mode is a volume mixer and still works without it. `grouping` only hides controls in this card; it is not a security boundary.
+- **No album art.** The card does not load the player's absolute `entity_picture` (`http://<ma-host>:8095/imageproxy`), because that is mixed content on an https dashboard. It uses `entity_picture_local`, then a relative `entity_picture`, then an https queue image.
+- **Typing or volume drags stutter on a kiosk tablet.** Set `backdrop` to `light`, `static` or `off`. `auto` already chooses `light` when `navigator.hardwareConcurrency` is 4 or less, `navigator.deviceMemory` is 2 or less, or the browser asks for reduced motion. The resolved mode is on the element: `data-backdrop` and `data-backdrop-why`.
+- **A manual install still shows the old card.** Change the `?v=` on the resource URL so the browser and Fully Kiosk fetch the new file. The HACS `/hacsfiles/` URL is not cached that way.
+- **The card is taller or shorter than the space under the toolbar.** By default it measures from its top edge to the bottom of the window (minimum 320 px). Set `height` (for example `700px`) to override that. Full screen and kiosk mode with the toolbar hidden still fill the screen.
+
+## License
+
+[MIT License](LICENSE). Copyright (c) 2026 Randy Bell.
+
+The bundled fonts (Inter and Plus Jakarta Sans) are not under that MIT license. They are SIL Open Font License 1.1. Each family's `LICENSE-*.txt` ships next to the font files, in `jukebox-card-fonts.zip` and in `fonts/` after you unzip it. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists the bundled packages and the fonts with their full license texts.
+
+### Credits
 
 This card is a front end; the real work is done by these projects:
 
 - **[mass_queue](https://github.com/droans/mass_queue)** (Music Assistant Queue Actions) by [droans](https://github.com/droans), MIT: the queue, the album, artist and playlist track lists, and the lyrics lookups all go through its actions.
-- **[Music Assistant](https://www.music-assistant.io)** ([GitHub](https://github.com/music-assistant)): the music library, players, search and metadata, through the official [Home Assistant integration](https://www.home-assistant.io/integrations/music_assistant/).
+- **[Music Assistant](https://music-assistant.io)** ([GitHub](https://github.com/music-assistant)): the music library, players, search and metadata, through the official [Home Assistant integration](https://www.home-assistant.io/integrations/music_assistant/).
 - **[Home Assistant](https://www.home-assistant.io)**: the dashboard the card runs in.
 - **Lyrics**: [LRCLIB](https://lrclib.net) and [Genius](https://genius.com) are lyrics providers in Music Assistant ([metadata providers](https://www.music-assistant.io/metadata/)). Music Assistant fetches the lyrics; the card never contacts LRCLIB or Genius, and only displays what Music Assistant returns. Lyrics remain the copyright of their owners.
 - **[Lit](https://lit.dev)** ([GitHub](https://github.com/lit/lit)) by Google LLC, BSD-3-Clause: bundled into `jukebox-card.js`.
@@ -395,74 +348,3 @@ This card is a front end; the real work is done by these projects:
 **Third-party notices.** [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists every package bundled into `jukebox-card.js` and every shipped font, with its version, license and full license text. It ships with every release, both as a release asset and inside `jukebox-card-fonts.zip`, and the minified bundle keeps Lit's license comments. `npm run build` regenerates it.
 
 This project is not affiliated with or endorsed by Music Assistant, Home Assistant, WiiM, Apple or Genius. All trademarks belong to their owners.
-
-## Changelog
-
-### 0.5.0
-- Speakers panel from the header status: a volume mixer by default (`speaker_mode: fixed`, 0.4 configs unchanged), or dynamic grouping, moving and presets through Music Assistant (`players/cmd/set_members`, `player_queues/transfer`).
-- Guests get volume only; quiet hours cap volume; each room shows what it plays; `large_buttons`. Permissions are a UI lock, not security.
-- Queue rows: Play now (asks first), Play next, Move up / down and Remove with Undo; on phones Play next and Remove stay on the row and ⋯ opens the rest. Play now only jumps to the item; it never re-sorts or clears the queue.
-- Redesigned tab bar: a segmented bar with the active tab as a solid white segment, larger labels, compact on short screens, and keyboard support (←/→/Home/End).
-- See [CHANGELOG.md](CHANGELOG.md).
-
-### 0.4.2
-- Fix: the bottom tabs were cut off (and could not be scrolled to) on regular monitors such as a 1024x666 browser window. The card now measures the space below the Home Assistant toolbar and fits exactly, with the toolbar shown or hidden, the sidebar open or closed, in kiosk or full screen, and at any browser zoom.
-- On short screens the header and tabs get a little more compact; on very wide, short screens (phones in landscape) the search keyboard sits beside the results. Nothing changes at 1920x1080.
-- See [CHANGELOG.md](CHANGELOG.md).
-
-### 0.4.1
-- Screensaver: when lyrics are on but there are none to show, a small, quiet status line ("No lyrics", "Lyrics unavailable" or "Looking for lyrics…") appears under the track info and drifts with the clock. Nothing else changes.
-- Docs and licensing: credits, requirements, third-party notices.
-- The release now ships `THIRD_PARTY_NOTICES.md` (as an asset and in the fonts zip), and the minified bundle keeps license comments.
-- See [CHANGELOG.md](CHANGELOG.md).
-
-### 0.4.0
-- Lyrics: synced and plain lyrics from Music Assistant via mass_queue, on the album art, a full-screen Stage, a new Lyrics tab and the screensaver.
-- Long-press a synced line to jump there (not on radio); plain lyrics scroll with the song.
-- Radio stations get lyrics by matching the stream's artist and title.
-- Clear states (looking / none / unavailable), one lookup per song, cached per device.
-- Editor: Display section with screensaver presets (Off, 1, 5, 10, 15, 30, 60 min, Custom) and a Lyrics section. Existing configs keep working.
-- See [CHANGELOG.md](CHANGELOG.md).
-
-### 0.3.2
-- Search results are now a list: every artist, album, track, playlist and station is a row with Add to queue, Play next, Replace queue and Start radio icons on the right.
-- Replace queue and Start radio ask first ("This clears what's playing for everyone"); Cancel sends nothing.
-- Tapping an artist, album or playlist no longer starts playing it: it opens a page with its tracks (and, for artists, albums).
-- Detail pages have Play, Shuffle, Add to queue and Start radio; Shuffle really plays the whole list in random order.
-- Start radio works from tracks, artists and albums; it is hidden for stations, podcasts, audiobooks and playlists.
-- Works on phones (390 px) up to 1920x1080; on very narrow screens the last two icons fold into a ⋯ menu.
-- Fixes: taps lost after a scroll, double plays from a double tap, rows hidden under the Keyboard button.
-
-### 0.3.1
-- Live API fixes: mass_queue track lists and paging, proxy-only player art, Radio Browser stations.
-
-## Repository, releases and HACS
-
-- `hacs.json`: `{"name": "Jukebox Card", "filename": "jukebox-card.js", "render_readme": true}`. `filename` lets HACS find `jukebox-card.js` even though the repo is called `ha-jukebox-kiosk-card`.
-- `dist/` is **not committed**. `.github/workflows/release.yml` runs on a `v*` tag: `npm ci`, typecheck, build, then it attaches `dist/jukebox-card.js`, `dist/THIRD_PARTY_NOTICES.md` and `jukebox-card-fonts.zip` to a GitHub release. HACS installs from the latest release's assets.
-  - Why: committed build output makes every diff noisy, goes stale when someone forgets to rebuild, and is easy to mismatch with the source. A tag-built release always matches its tag, HACS lets users pick from the last 5 releases, and the repo stays small.
-  - To release: bump `version` in `package.json` (and `package-lock.json`) and `VERSION` in `src/jukebox-card.ts`, run `npm run build` so `THIRD_PARTY_NOTICES.md` is current, commit, then `git tag -a v0.4.2 -m 'Jukebox Card 0.4.2' && git push origin v0.4.2` (push only that tag).
-- `test/shots/` (generated by the tests and screenshot scripts) is git-ignored; the curated screenshots used in this README are in `docs/`.
-- License: MIT (`LICENSE`), Copyright (c) 2026 Randy Bell. The bundled fonts are OFL (licence files ship in `dist/fonts/` and the fonts zip). Third-party licenses are in `THIRD_PARTY_NOTICES.md`, which ships with each release.
-
-## Open questions (verify against the live system before relying on them)
-
-**Resolved** (from the real exports, 31 Oct 2026):
-- the search response shape: `response` holding 7 lists
-- provider from the URI scheme
-- the enqueue values (`play, replace, next, replace_next, add`) and `radio_mode` as a boolean
-- the Music Assistant `config_entry_id` (kept out of the repo; see Install)
-- that non-admin users can call `return_response` services
-- the mass_queue track services: names, `{config_entry_id, uri, page?}` and the response shape (0.3.1 parses it, with durations)
-- Radio Browser item shape (tab-padded names, `null` images) and `play_media` with `media_type: radio`
-- player art: `entity_picture` is the absolute MA imageproxy URL, `entity_picture_local` the relative HA proxy (0.3.1 uses only the latter)
-- **the rooms**: WiiM `media_player.living_room`, `media_player.kitchen` and `media_player.garage` (Living Room / Kitchen / Garage Speaker), volume only, with `play_media` going to everywhere only
-
-**Still open:**
-1. **mass_queue entry id.** The `get_*_tracks` services take the *mass_queue* entry id (`mass_queue_entry_id`), not the MA one. The dev harness uses a placeholder (`01MASSQUEUE0000000000000000`); the real id stays out of the repo.
-2. **`music_assistant.get_queue` on a group player.** The card doesn't need it (mass_queue covers the queue); it is only used as a fallback for the current index. Confirm it answers for `media_player.everywhere`.
-3. **mass_queue version.** The installed v0.10.4 manifest reports `0.10.3`. Its `page` handling (page 0 = all tracks) may change in later versions; the card's paging copes with full, paged and page-ignoring replies.
-4. **`unfavorite_current_item`** may only work when the current track is a library item.
-5. **Transport-dot convention.** Active shuffle and repeat are white with a dot, as in the mockup. Repeat-one uses the repeat-1 glyph and also has the dot.
-6. **Favorite state.** The heart reads `favorite` from the current mass_queue item. If MA is slow to report it after `button.press`, the card holds the optimistic state for 26 s.
-7. **Collapsing the keyboard on scroll** in portrait Search is not built yet.
