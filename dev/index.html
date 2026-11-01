@@ -9,6 +9,17 @@
     #log { position: fixed; right: 8px; bottom: 90px; z-index: 99; width: 420px; max-height: 40vh; overflow: auto; font: 11px/1.4 ui-monospace, monospace;
       color: #9f9; background: #000c; border: 1px solid #333; padding: 6px; white-space: pre-wrap; display: none; }
     body.log #log { display: block; }
+    /* ?ha=toolbar|kiosk|masonry[&sidebar=open|closed|narrow|none]: emulate the Home Assistant frontend around the card
+       (fixed app toolbar of --header-height, sidebar drawer, window-scrolling view like HA 2024+). Off by default. */
+    html.ha, html.ha body { height: auto; min-height: 100%; overflow: visible; }
+    html.ha { --header-height: 56px; --ha-sidebar: 0px; background: #111; }
+    html.ha body { font-family: Roboto, system-ui, sans-serif; }
+    #ha-sidebar { position: fixed; top: 0; bottom: 0; left: 0; width: var(--ha-sidebar); background: #1c1c1c; border-right: 1px solid #ffffff1f; z-index: 4; }
+    #ha-toolbar { position: fixed; top: 0; left: var(--ha-sidebar); right: 0; height: calc(var(--header-height) + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top);
+      box-sizing: border-box; display: flex; align-items: center; padding-left: 16px; color: #e1e1e1; font: 400 20px Roboto, sans-serif; background: #101010; border-bottom: 1px solid #ffffff1f; z-index: 4; }
+    #ha-view { margin-left: var(--ha-sidebar); padding-top: calc(var(--header-height) + env(safe-area-inset-top)); min-height: 100vh; box-sizing: border-box; }
+    html.ha.kiosk #ha-toolbar { display: none; } html.ha.kiosk #ha-view { padding-top: 0; }
+    html.ha.masonry #ha-view { padding: calc(var(--header-height) + 4px) 8px 8px; } html.ha.masonry .ha-filler { height: 140px; margin: 0 0 8px; background: #1c1c1c; border-radius: 12px; }
   </style>
 </head>
 <body>
@@ -47,7 +58,19 @@
       ...extra,
     });
     card.hass = hass;
-    document.body.appendChild(card);
+    const ha = params.get('ha');
+    if (ha) {
+      const root = document.documentElement; root.classList.add('ha', ha);
+      const sb = params.get('sidebar') ?? 'narrow';
+      root.style.setProperty('--ha-sidebar', { open: '256px', narrow: '56px', closed: '0px', none: '0px' }[sb] ?? '56px');
+      if (sb === 'none' || sb === 'closed') { /* HA hides the drawer (modal) */ } else { const d = document.createElement('div'); d.id = 'ha-sidebar'; document.body.appendChild(d); }
+      const tb = document.createElement('div'); tb.id = 'ha-toolbar'; tb.textContent = 'Jukebox'; document.body.appendChild(tb);
+      const view = document.createElement('div'); view.id = 'ha-view'; document.body.appendChild(view);
+      if (ha === 'masonry') { const f = document.createElement('div'); f.className = 'ha-filler'; view.appendChild(f); }
+      view.appendChild(card);
+      window.__haToolbar = (show) => { root.classList.toggle('kiosk', !show); };
+      window.__haSidebar = (w) => root.style.setProperty('--ha-sidebar', w);
+    } else document.body.appendChild(card);
     window.__card = card;
     window.__renders = [];
     const log = document.getElementById('log');

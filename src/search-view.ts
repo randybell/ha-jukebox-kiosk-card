@@ -443,6 +443,14 @@ export class JbSearch extends LitElement {
     @container np (orientation: landscape) and (max-height: 520px) {
       .sx { --kh: 46px; --kgap: 6px; } .recents { display: none; }
     }
+    /* very short landscape (phone on its side under the HA toolbar): keyboard alone on the left at full height,
+       query above the results on the right, keys sized to the space so no row is clipped */
+    @container np (orientation: landscape) and (min-width: 700px) and (max-height: 400px) {
+      .sx { grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "kb q" "kb res"; row-gap: 8px; padding-top: 8px; padding-bottom: 8px;
+        --kgap: 4px; --kh: clamp(28px, calc((100cqh - 50px) / 5 - 1px), 46px); }
+      .kbd { align-self: center; }
+      .qbar { height: 48px; } .qmeta { margin-top: 4px; }
+    }
     /* phone */
     @container np (max-width: 520px) {
       .sx { --kh: 44px; --kgap: 5px; --kfs: 19px; gap: 9px; padding: 10px 12px 8px; }

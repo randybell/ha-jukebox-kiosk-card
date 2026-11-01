@@ -1,4 +1,4 @@
-# Jukebox Card (`ha-jukebox-kiosk-card`) 0.4.1
+# Jukebox Card (`ha-jukebox-kiosk-card`) 0.4.2
 
 This is a Lovelace custom card for a Home Assistant + Music Assistant jukebox kiosk. It uses the Black Frame Mono look: black header and footer, the album art blurred behind the centre, white active buttons and light-white inactive ones.
 
@@ -43,10 +43,11 @@ npm run typecheck     # tsc --noEmit
 ```bash
 python3 -m http.server 8765 --bind 127.0.0.1     # from the project root; the harness won't run from file://
 # open http://127.0.0.1:8765/dev/index.html?log=1
-npm test                                           # run.mjs (156 end-to-end checks) + lyrics unit tests (51) + lyrics end-to-end checks (75) (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
+npm test                                           # run.mjs (156 end-to-end checks) + lyrics unit tests (51) + lyrics end-to-end checks (84) (puppeteer-core + /usr/bin/google-chrome; CHROME=... to override)
 node test/shots-m2.mjs f1                          # every tab at 1920x1080, 1280x800, 820x1180 and 390x844 -> test/shots/m2/
 JB_SIZES=1920x1080 node test/shots-m2.mjs x1 '&backdrop=light'   # one size, one mode
 node test/shots-v040.mjs                           # lyrics surfaces, states and the editor at 1280x800, 1920x1080, 390x844 -> test/shots/v040/
+npm run test:fit                                   # fit-to-height checks: 11 sizes x HA toolbar / kiosk / full screen, every tab, sidebar, resize, emulated Mac Chrome zoom -> test/shots/v042/
 node test/perf.mjs 3                               # frame-time benchmark, see "Backdrop and performance"
 ```
 
@@ -90,6 +91,8 @@ URL parameters:
 | `keeplyrics=1` | with `fresh=1`, keep the lyrics cache |
 | `cfg=<json>` | merged into the card config |
 | `backdrop=auto\|full\|light\|static\|off` | sets the `backdrop` option |
+| `ha=toolbar\|kiosk\|masonry` | emulates a Home Assistant view around the card: fixed 56 px toolbar (`--header-height`), toolbar hidden (kiosk mode), or a masonry view with padding and a card above |
+| `sidebar=open\|narrow\|closed\|none` | with `ha=`, the HA sidebar width (256 px, 56 px, or none; default `narrow`) |
 
 Every call is recorded in `window.__calls`, except read-only lyrics lookups (`mass_queue.send_command`), which go to `window.__lyricsLog`. `window.__setNowPlaying({artist, title, radio, uri, duration, position})` and `window.__playTrack(name, position)` change what is playing. `test/run.mjs` drives the card with real CDP mouse, touch and keyboard input and writes `test/shots/results.json`. The browser tests are hermetic (`test/intercept.mjs`): `/api/media_player_proxy/…` and https images are answered with a generated SVG, and any request to a plain-http host other than the dev server fails (test 16o checks that the card never asks the MA host directly).
 
@@ -116,7 +119,7 @@ Without mass_queue the card still works for search, the Browse grid, transport, 
 ### Manual
 
 1. Download `jukebox-card.js` and `jukebox-card-fonts.zip` from a release (or run `npm run build`) and put them in `/config/www/jukebox/` as `jukebox-card.js` and `fonts/`.
-2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.4.1`, type **JavaScript module**.
+2. Add the resource under **Settings → Dashboards → ⋮ → Resources**: URL `/local/jukebox/jukebox-card.js?v=0.4.2`, type **JavaScript module**.
    - Change `?v=` on every update, or Fully Kiosk will keep the old file.
    - Fonts are found in `fonts/` next to the `.js` automatically.
 
@@ -163,7 +166,7 @@ views:
 | `slow_ms` | `800` | Search replies slower than this switch on in-flight limiting |
 | `accent` | `mono` | Only `mono` exists so far |
 | `font_base` | `fonts/` next to the `.js` | Location of the woff2 files. `false` uses system fonts |
-| `height` | `100dvh` | Card height; use a fixed px value outside panel views |
+| `height` | fits the window | Card height. By default the card fills the space from its top edge to the bottom of the window (below the HA toolbar, minimum 320 px); set a fixed value such as `700px` to override |
 | `backdrop` | `auto` | `full`, `light`, `static`, `off` or `auto`. See [Backdrop and performance](#backdrop-and-performance) |
 | `scale` | `auto` | Large-screen zoom. `auto` scales the whole UI by min(width/1420, height/800) once that is ≥ 1.15 (1920x1080 → 1.35, capped at 1.8). A number forces it; `1` turns it off |
 | `title` | `Jukebox` | Brand text in the header |
@@ -363,6 +366,11 @@ This project is not affiliated with or endorsed by Music Assistant, Home Assista
 
 ## Changelog
 
+### 0.4.2
+- Fix: the bottom tabs were cut off (and could not be scrolled to) on regular monitors such as a 1024x666 browser window. The card now measures the space below the Home Assistant toolbar and fits exactly, with the toolbar shown or hidden, the sidebar open or closed, in kiosk or full screen, and at any browser zoom.
+- On short screens the header and tabs get a little more compact; on very wide, short screens (phones in landscape) the search keyboard sits beside the results. Nothing changes at 1920x1080.
+- See [CHANGELOG.md](CHANGELOG.md).
+
 ### 0.4.1
 - Screensaver: when lyrics are on but there are none to show, a small, quiet status line ("No lyrics", "Lyrics unavailable" or "Looking for lyrics…") appears under the track info and drifts with the clock. Nothing else changes.
 - Docs and licensing: credits, requirements, third-party notices.
@@ -394,7 +402,7 @@ This project is not affiliated with or endorsed by Music Assistant, Home Assista
 - `hacs.json`: `{"name": "Jukebox Card", "filename": "jukebox-card.js", "render_readme": true}`. `filename` lets HACS find `jukebox-card.js` even though the repo is called `ha-jukebox-kiosk-card`.
 - `dist/` is **not committed**. `.github/workflows/release.yml` runs on a `v*` tag: `npm ci`, typecheck, build, then it attaches `dist/jukebox-card.js`, `dist/THIRD_PARTY_NOTICES.md` and `jukebox-card-fonts.zip` to a GitHub release. HACS installs from the latest release's assets.
   - Why: committed build output makes every diff noisy, goes stale when someone forgets to rebuild, and is easy to mismatch with the source. A tag-built release always matches its tag, HACS lets users pick from the last 5 releases, and the repo stays small.
-  - To release: bump `version` in `package.json` (and `package-lock.json`) and `VERSION` in `src/jukebox-card.ts`, run `npm run build` so `THIRD_PARTY_NOTICES.md` is current, commit, then `git tag -a v0.4.1 -m 'Jukebox Card 0.4.1' && git push origin v0.4.1` (push only that tag).
+  - To release: bump `version` in `package.json` (and `package-lock.json`) and `VERSION` in `src/jukebox-card.ts`, run `npm run build` so `THIRD_PARTY_NOTICES.md` is current, commit, then `git tag -a v0.4.2 -m 'Jukebox Card 0.4.2' && git push origin v0.4.2` (push only that tag).
 - `test/shots/` (generated by the tests and screenshot scripts) is git-ignored; the curated screenshots used in this README are in `docs/`.
 - License: MIT (`LICENSE`), Copyright (c) 2026 Randy Bell. The bundled fonts are OFL (licence files ship in `dist/fonts/` and the fonts zip). Third-party licenses are in `THIRD_PARTY_NOTICES.md`, which ships with each release.
 

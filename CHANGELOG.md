@@ -2,6 +2,21 @@
 
 All notable changes to Jukebox Card. Versions follow [semver](https://semver.org/).
 
+## 0.4.2 — 2026-10-31
+
+Hotfix: the bottom tab bar was cut off on standard monitors.
+
+### Fixed
+- **Tab bar pushed below the fold.** The card was sized to the full viewport height (`100dvh`/`100vh`), but in a Home Assistant dashboard it starts below HA's fixed 56 px toolbar, so the tab bar ran 56 px past the bottom of the window (for example tabs at 643–722 px in a 1024x666 window). Viewport units grow with browser zoom-out, so zooming out (Cmd-minus) did not help. In 0.4.0 the page could still be scrolled to reach the tabs, but the wheel over the middle of the card is captured by its scroll areas (`overscroll-behavior: contain`, including the lyrics overlay once real lyrics load), so in practice the tabs could not be reached.
+- The card now measures the space it really has: its top edge on the page against the visible viewport (`innerHeight`, `clientHeight` and `visualViewport`), re-measured on window and visual-viewport resize, orientation change, full screen changes, HA navigation, and a `ResizeObserver` on the page and the card's parent. The result is set as an internal CSS variable; there is no hard-coded toolbar height (HA's `--header-height` is only a fallback). Any padding below the card in a masonry or sections view is subtracted. Minimum height 320 px; safe-area insets are still respected. The `height` option still overrides it.
+- In full screen and in kiosk mode with the toolbar hidden the card still fills the whole screen.
+- Short viewports (under 700 px tall) get a slightly more compact header and tab bar, and under 560 px more compact again, so the header and tabs always stay fully visible while the middle shrinks or scrolls.
+- Phones in landscape and other short, wide screens: the search keyboard sits beside the query and results instead of above them, so it is no longer clipped.
+- Nothing changes at 1920x1080 (same layout, same large-screen zoom, same frame times).
+
+### Tests
+- New `test/fit.e2e.mjs` (`npm run test:fit`): the dev harness can emulate HA's toolbar, sidebar, kiosk mode and a masonry view (`?ha=toolbar|kiosk|masonry&sidebar=open|narrow|closed`). Checks that the header and every tab are fully visible and clickable with no page scroll on every tab (Search with the keyboard open) at 1024x666, 1280x720, 1366x768, 1440x900, 1280x800, 1920x1080, 390x844, 844x390, 820x1180, 1180x820 and 1024x600, with and without the toolbar and in full screen; with the sidebar open and closed; while resizing, rotating and hiding or showing the toolbar; and an emulated Mac Chrome check (1024x666, device scale 2, browser zoom 100 %, 80 % and 67 %). Screenshots go to `test/shots/v042/`.
+
 ## 0.4.1 — 2026-10-31
 
 Credits, requirements and third-party notices, plus one small screensaver change.

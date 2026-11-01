@@ -14,7 +14,7 @@ import { roomsOf, playerArt } from './shared';
 import { resolveBackdrop, drawPreblurred, BACKDROPS, prefersReducedMotion, type BackdropMode } from './backdrop';
 import type { HomeAssistant, JukeboxCardConfig, TabId } from './types';
 
-export const VERSION = '0.4.1';
+export const VERSION = '0.4.2';
 const TABS: Array<{ id: TabId; label: string; icon: string }> = [
   { id: 'now', label: 'Now Playing', icon: 'disc' },
   { id: 'browse', label: 'Browse', icon: 'browse' },
@@ -26,6 +26,10 @@ const CHILDREN = ['jb-now', 'jb-browse', 'jb-search', 'jb-queue'];
 const bool = (v: unknown) => v === undefined || typeof v === 'boolean';
 const num = (v: unknown, lo: number, hi: number) => v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi);
 /** Screensaver status line for lyrics states that have nothing to show (shown only when screensaver lyrics are on). */
+/** Fit-to-panel: never shorter than this (px). Below it the card keeps this height and the page scrolls, as a regular card would. */
+const FIT_MIN = 320;
+/** Short-viewport compaction thresholds for the fitted card height (px). */
+const SHORT_H = 700, TINY_H = 560;
 const SAVER_LYRICS_STATUS: Partial<Record<LyricsStatus, string>> = { none: 'No lyrics', error: 'Lyrics unavailable', loading: 'Looking for lyrics…' };
 
 export class JukeboxCard extends LitElement {
@@ -68,6 +72,12 @@ export class JukeboxCard extends LitElement {
   private _stageUi = false;
   private _stageNative = false;
   private _stageUiTimer?: number;
+  /** fitted height (px) written to --_fit-h; 0 = not measured yet */
+  private _fitH = 0;
+  private _fitRaf = 0;
+  private _fitTrail = 0;
+  private _fitTimer?: number;
+  private _fitRo?: ResizeObserver;
 
   static getConfigElement() { return document.createElement('jukebox-card-editor'); }
   static getStubConfig(): Partial<JukeboxCardConfig> {
@@ -157,6 +167,20 @@ export class JukeboxCard extends LitElement {
     if (this.hass) this.queue.refreshSoon(0);
     this._rm = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
     this._rm?.addEventListener?.('change', this.applyBackdrop);
+    window.addEventListener('resize', this.scheduleFit);
+    window.addEventListener('orientationchange', this.scheduleFit);
+    window.addEventListener('location-changed', this.scheduleFit);
+    window.visualViewport?.addEventListener('resize', this.scheduleFit);
+    document.addEventListener('fullscreenchange', this.scheduleFit);
+    if ('ResizeObserver' in window) {
+      // page layout changes that move the card without resizing it (HA toolbar shown/hidden, sidebar, cards above it)
+      this._fitRo = new ResizeObserver(this.scheduleFit);
+      this._fitRo.observe(document.documentElement);
+      if (this.parentElement) this._fitRo.observe(this.parentElement);
+    }
+    // cheap safety net for offset changes no observer reports (e.g. a kiosk-mode plugin hiding the toolbar): one rect read every 2 s
+    this._fitTimer = window.setInterval(this.scheduleFit, 2000);
+    this.scheduleFit();
   }
   disconnectedCallback() {
     super.disconnectedCallback();
@@ -176,6 +200,59 @@ export class JukeboxCard extends LitElement {
     if (this._stage) this.closeStage();
     this._rm?.removeEventListener?.('change', this.applyBackdrop);
     this._ro?.disconnect(); this._ro = undefined;
+    window.removeEventListener('resize', this.scheduleFit);
+    window.removeEventListener('orientationchange', this.scheduleFit);
+    window.removeEventListener('location-changed', this.scheduleFit);
+    window.visualViewport?.removeEventListener('resize', this.scheduleFit);
+    document.removeEventListener('fullscreenchange', this.scheduleFit);
+    this._fitRo?.disconnect(); this._fitRo = undefined;
+    window.clearInterval(this._fitTimer); cancelAnimationFrame(this._fitRaf); this._fitRaf = 0;
+  }
+  // ---------- fit to the available panel height ----------
+  private scheduleFit = () => {
+    if (this._fitRaf) return;
+    this._fitRaf = requestAnimationFrame(() => { this._fitRaf = 0; this.fit(); });
+  };
+  /**
+   * Size the card to the space that is really left below it, in CSS px (so it is right at any browser zoom):
+   * viewport height − the host's top in the document (HA toolbar, safe-area padding, cards above). 100dvh alone
+   * overflowed by the toolbar height in a normal HA dashboard and pushed the tab bar below the fold.
+   */
+  fit() {
+    if (!this.isConnected || !this._config) return;
+    const d = document as any;
+    const fs = d.fullscreenElement ?? d.webkitFullscreenElement;
+    const vv = window.visualViewport;
+    const de = document.documentElement;
+    // layout viewport height; the visual viewport only when unzoomed (pinch-zoom must not shrink the card)
+    let vh = Math.min(window.innerHeight, de.clientHeight || window.innerHeight);
+    if (vv && Math.abs(vv.scale - 1) < 0.01) vh = Math.min(vh, vv.height);
+    let h: number;
+    if (fs === this) h = vh;
+    else {
+      const top = Math.max(0, this.getBoundingClientRect().top + (window.scrollY || 0));
+      h = vh - top;
+      if (h < FIT_MIN) {
+        // a regular card far down a masonry/sections view: one screen tall minus HA's toolbar (its own CSS var), not the space left
+        const hdr = parseFloat(getComputedStyle(this).getPropertyValue('--header-height')) || 0;
+        h = vh - hdr;
+      } else {
+        // trailing padding below the card (e.g. HA view padding-bottom) would still make the page scroll: take it off too.
+        // Only measurable while the page overflows, so remember it (no oscillation once the card fits).
+        if (de.scrollHeight > vh + 0.5) {
+          const below = de.scrollHeight - (top + this.offsetHeight);
+          if (below >= 0 && below <= 48) this._fitTrail = Math.ceil(below);
+        }
+        h -= this._fitTrail;
+      }
+    }
+    h = Math.max(FIT_MIN, Math.floor(h));
+    if (h === this._fitH) return;
+    this._fitH = h;
+    this.style.setProperty('--_fit-h', `${h}px`);
+    this.dataset.fitH = String(h);
+    const size = h < TINY_H ? 'tiny' : h < SHORT_H ? 'short' : '';
+    if (size) this.dataset.fit = size; else delete this.dataset.fit;
   }
   protected firstUpdated() {
     this.renderRoot.addEventListener('focusin', this.onFocusIn as EventListener);
@@ -427,9 +504,10 @@ export class JukeboxCard extends LitElement {
   }
 
   static styles = [tokens, base, css`
-    :host { display: block; height: var(--jb-height, 100dvh); }
+    :host { display: block; height: var(--jb-height, var(--_fit-h, 100dvh)); min-height: 0; }
     .app {
-      height: calc(var(--jb-height, 100vh) / var(--_z, 1)); height: calc(var(--jb-height, 100dvh) / var(--_z, 1));
+      /* --_fit-h: measured space below the card's top (see fit()); 100dvh only until the first measurement */
+      height: calc(var(--jb-height, var(--_fit-h, 100vh)) / var(--_z, 1)); height: calc(var(--jb-height, var(--_fit-h, 100dvh)) / var(--_z, 1));
       zoom: var(--_z, 1); /* large-screen scale, set from ResizeObserver; lengths inside are multiplied, so the height is pre-divided */
       display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr);
       position: relative; isolation: isolate; overflow: hidden;
@@ -541,6 +619,15 @@ export class JukeboxCard extends LitElement {
       .pill { display: none; } .clock { font-size: 18px; } .top { min-height: 52px; padding-top: 10px; padding-bottom: 10px; }
       .tab { min-height: 56px; font-size: 11px; } .tab .i { width: 24px; height: 24px; }
     }
+    /* short panels (fitted height < 700 / < 560 px): tighter header and tab bar so the middle keeps the room */
+    :host([data-fit]) .top { min-height: 50px; padding-top: 7px; padding-bottom: 7px; }
+    :host([data-fit]) .brand { font-size: 19px; } :host([data-fit]) .brand-i { width: 24px; height: 24px; } :host([data-fit]) .clock { font-size: 19px; }
+    :host([data-fit]) .pill { padding: 5px 12px; font-size: 13px; }
+    :host([data-fit]) .tabs { padding-top: 4px; padding-bottom: calc(5px + env(safe-area-inset-bottom)); }
+    :host([data-fit]) .tab { min-height: 54px; gap: 2px; } :host([data-fit]) .tab .i { width: 24px; height: 24px; }
+    :host([data-fit]) .tab.active::after { top: -5px; }
+    :host([data-fit=tiny]) .top { min-height: 44px; padding-top: 5px; padding-bottom: 5px; }
+    :host([data-fit=tiny]) .tab { min-height: 48px; font-size: 11px; } :host([data-fit=tiny]) .tab .i { width: 22px; height: 22px; }
   `];
 }
 if (!customElements.get('jukebox-card')) customElements.define('jukebox-card', JukeboxCard);
