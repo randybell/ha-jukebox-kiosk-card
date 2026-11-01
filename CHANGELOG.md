@@ -2,6 +2,17 @@
 
 All notable changes to Jukebox Card. Versions follow [semver](https://semver.org/).
 
+## Unreleased
+
+Docs, license and workflow housekeeping for HACS default-store inclusion. No card change and no version bump.
+
+### Changed
+- **LICENSE** is the standard MIT text only, with `Copyright (c) 2026 Randy Bell`. The SIL Open Font License paragraph that used to follow it is removed so GitHub can detect MIT. Bundled fonts (Inter, Plus Jakarta Sans) stay OFL-1.1; that is already recorded in `THIRD_PARTY_NOTICES.md`, and each family's `LICENSE-*.txt` ships next to the font files.
+- **README** order is intro, screenshots, requirements, install, configuration, options, troubleshooting and license. Screenshot paths are absolute URLs on `main`. The duplicated changelog list is now a link to `CHANGELOG.md`. Maintainer build, dev harness, tests and release steps moved to `docs/DEVELOPMENT.md`. The "Open questions" section and personal setup notes are removed.
+- **Install:** HACS custom repository for now (default-store listing is pending). HACS downloads the release assets into `/config/www/community/ha-jukebox-kiosk-card/` and does not unzip `jukebox-card-fonts.zip`. Custom fonts load only after that archive is unzipped into `fonts/` next to the JavaScript, or `font_base` is set. Otherwise the card uses system fonts.
+- **Validate workflow** added at `.github/workflows/validate.yml` (`hacs/action`, category `plugin`, no `ignore`).
+- **Release workflow** comment only: HACS installs the release assets, not `dist/jukebox-card.js` from the git tree.
+
 ## 0.5.0 — 2026-10-31
 
 ### Added
